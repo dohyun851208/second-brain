@@ -1,45 +1,51 @@
 # kordoc 사용법
 
 한국 문서 파싱·편집 엔진 ([chrisryugj/kordoc](https://github.com/chrisryugj/kordoc), MIT, npm).
-HWP 3.x/5.x·HWPX·HWPML·PDF·DOCX·XLS/XLSX → Markdown, 서식 보존 패치, 문서 비교, 도장 배치.
+HWP 3.x/5.x·HWPX·HWPML·PDF·DOCX·XLS/XLSX → Markdown, 서식 보존 패치·채우기, 문서 비교, 도장 배치, 개인정보 마스킹(redact), 공문 표기법 검수(lint), 표 서식 프로필.
 한컴 오피스·COM 불필요, 로컬 실행이라 문서가 외부로 나가지 않는다 (학생 개인정보 안전).
 
 ## 실행
 
 ```powershell
-npx -y kordoc@^3 <명령> ...
+npx -y kordoc@^4 <명령> ...
 ```
 
 Node 18+ 필요. 첫 호출만 다운로드로 느리고 이후 캐시. `ECOMPROMISED`·`MODULE_NOT_FOUND` 에러가 나면
 `$env:LOCALAPPDATA\npm-cache\_npx\` 아래 해당 캐시 폴더를 지우고 재시도한다.
 
-상시 사용 환경이면 `npx -y kordoc@^3 setup`(대화형 마법사)으로 MCP 서버 등록도 가능 — 콜드스타트가
-없어지고 MCP 전용 기능(`compare_documents`, fill의 `require_unique`·`formats`·`mask_values`)을 쓸 수 있다.
+상시 사용 환경이면 `npx -y kordoc@^4 setup`(대화형 마법사)으로 MCP 서버 등록도 가능 — 콜드스타트가
+없어지고 MCP 전용 기능(`compare_documents`, 세분 파싱 `parse_table`·`parse_metadata` 등)을 쓸 수 있다.
+**3.x에서 MCP 전용이던 fill 가드(`--require-unique`·`--formats`·`--mask`)와 서식 프로필(`profile`)은 4.x부터 CLI에 편입돼 MCP 없이도 쓴다.**
 
 ## 명령 치트시트
 
 | 작업 | 명령 |
 |---|---|
-| 문서 → Markdown | `npx -y kordoc@^3 문서.hwp -o 문서.md` (hwpx·pdf·docx·xls 동일) |
+| 문서 → Markdown | `npx -y kordoc@^4 문서.hwp -o 문서.md` (hwpx·pdf·docx·xls 동일) |
 | 페이지 범위 | `-p 1-3` 또는 `-p 1,3,5` |
-| 구조화 JSON | `--format json` (blocks+metadata) |
+| 구조화 JSON | `--format json` (blocks+metadata) · `--format chunks` (RAG용 위계 청크) |
 | PDF 수식 OCR | `--formula-ocr` (첫 사용 시 모델 ~155MB 자동 다운로드, `check-formula-models`로 상태 확인) |
-| 서식 필드 목록 | `npx -y kordoc@^3 fill 서식.hwpx --dry-run` |
-| 서식 채우기 | `npx -y kordoc@^3 fill 서식.hwpx -j 값.json -o 결과.hwpx` |
-| 기존 문서 내용 수정 | `npx -y kordoc@^3 patch 원본.hwpx 편집.md -o 결과.hwpx` (`.hwp`도 가능 — 원본 포맷 유지) |
+| 서식 필드 목록 | `npx -y kordoc@^4 fill 서식.hwpx --dry-run` |
+| 서식 채우기 | `npx -y kordoc@^4 fill 서식.hwpx -j 값.json -o 결과.hwpx` (가드 `--require-unique`·`--formats`·`--mask`) |
+| 표 빈 열 보존 | `--keep-empty-cols` (서식 입력란인 오른쪽 끝 빈 열이 트림되지 않게) |
+| 기존 문서 내용 수정 | `npx -y kordoc@^4 patch 원본.hwpx 편집.md -o 결과.hwpx` (`.hwp`도 가능 — 원본 포맷 유지) |
 | 문서 비교 | MCP `compare_documents` (CLI엔 없음 — 양쪽을 md로 파싱해 diff해도 됨) |
-| 공문서 생성 (폴백) | `npx -y kordoc@^3 generate 초안.md -o 결과.hwpx --preset 보고서` |
-| 구조 검증 | `npx -y kordoc@^3 validate 결과.hwpx` |
-| 도장/서명 배치 | `npx -y kordoc@^3 seal 문서.hwpx --image 도장.png --anchor "(인)" -o 결과.hwpx` |
-| 조판 미리보기 | `npx -y kordoc@^3 render 문서.hwpx -o 미리보기.svg` (생성/패치본은 `--reflow`, 형광펜 `--highlight 검색어`) |
+| 공문서 생성 (폴백) | `npx -y kordoc@^4 generate 초안.md -o 결과.hwpx --preset 보고서` |
+| 구조 검증 | `npx -y kordoc@^4 validate 결과.hwpx` |
+| 표 서식 프로필 | `npx -y kordoc@^4 profile 참조.hwpx -o 서식.json` → `generate --profile 서식.json` |
+| 개인정보 마스킹 | `npx -y kordoc@^4 redact 문서.hwpx -o 결과.hwpx` (`--dry-run`으로 먼저 탐지) |
+| 공문 표기법 검수 | `npx -y kordoc@^4 lint 초안.md` (편람 표기법, error면 exit 1) |
+| 도장/서명 배치 | `npx -y kordoc@^4 seal 문서.hwpx --image 도장.png --anchor "(인)" -o 결과.hwpx` |
+| 조판 미리보기 | `npx -y kordoc@^4 render 문서.hwpx -o 미리보기.svg` (생성/패치본은 `--reflow`, 형광펜 `--highlight 검색어`) |
 
 ## 읽기 (파싱)
 
 - 병합·중첩 표는 GFM으로 표현이 안 되므로 HTML `<table>`(colspan/rowspan)로 나온다 — 그대로 다룬다.
+- 표 오른쪽 끝의 빈 열(서식 입력란)은 기본으로 트림된다 — 그 칸을 살려야 하면 `--keep-empty-cols` (#47).
 - 수식은 `$...$` / `$$...$$` LaTeX.
 - PDF는 텍스트층 품질 신호를 계산한다 — `needsOcr`이면 스캔/손상 PDF라는 뜻 (본문 텍스트 OCR은 미내장, 사용자에게 알린다). 단 **수식만은** `--formula-ocr`로 OCR 가능.
 - PDF 머리글/바닥글은 자동 제거된다 (`--no-header-footer`로 끔). HWP5 러닝 헤더가 페이지마다 반복되면 `--dedupe-headers` (기본 off — 붙임별 재번호가 오삭제될 수 있어 주의).
-- 문서 속 이미지는 출력 폴더의 `images/`에 `image_001.png`식으로 저장된다. **함정 둘**: ① `-o` 단일 출력은 md 링크에 `images/` 접두사가 안 붙어 링크가 깨진다 (`-d` 모드만 붙음) ② 파일명 번호가 문서마다 1부터라 여러 문서를 같은 폴더로 파싱하면 서로 덮어쓴다 → 문서별 이미지 폴더로 분리하고 링크를 보정한다. HWP5는 `--inline-images`로 base64 인라인도 가능 (별도 파일 없음 — 타 포맷은 옵션 무시).
+- 문서 속 이미지는 출력 폴더의 `images/`에 `image_001.png`식으로 저장된다 (4.x는 추출률이 크게 올라 HWPX/HWP5 100%, PDF 이미지도 PNG로 디코드). **함정 둘**: ① `-o` 단일 출력은 md 링크에 `images/` 접두사가 안 붙어 링크가 깨진다 (`-d` 모드만 붙음) ② 파일명 번호가 문서마다 1부터라 여러 문서를 같은 폴더로 파싱하면 서로 덮어쓴다 → 문서별 이미지 폴더로 분리하고 링크를 보정한다. HWP5는 `--inline-images`로 base64 인라인도 가능 (별도 파일 없음 — 타 포맷은 옵션 무시).
 - 여러 파일은 `-d 디렉토리/` 일괄 모드 — 단 출력명이 확장자를 뗀 `수업안.md`식이라 `수업안.hwp`·`수업안.pdf`가 공존하면 충돌한다. 출력명을 통제하려면 파일별 `-o`.
 
 ## patch (서식 보존 편집)
@@ -60,39 +66,51 @@ Node 18+ 필요. 첫 호출만 다운로드로 느리고 이후 캐시. `ECOMPRO
    `output_format: hwpx`면 동일한 재구성 경로다. `.hwp` 채우기는 한컴 COM으로 `.hwpx` 1회 변환 후 fill.
 1. `--dry-run`으로 라벨 목록 먼저 파악.
 2. 값은 `-j 값.json` 권장 (`-f 'k=v'`는 셸 히스토리에 값 노출). 다중줄은 JSON 문자열 안 `\n`.
-3. 같은 라벨이 2곳 이상이면 **모든 칸에 채운다** — MCP `fill_form`은 `require_unique: true`로 2곳+ 매칭되는 스칼라 라벨을 거부(rejected 보고)시킬 수 있다(배열 값은 예외). CLI엔 이 가드가 없으니 값을 배열로 주거나 어느 칸인지 확인 후 채운다.
-4. 날짜·전화·주민등록번호 등 칸 모양 변환(`yyyy.mm.dd`, `###-####-####` 숫자 마스크)은 MCP `fill_form`의 `formats` 파라미터가 지원한다.
-5. 기본 출력은 원본 글꼴·정렬 보존(`hwpx-preserve`).
-6. 주민번호·계좌 등 채운 값은 응답에 되풀이하지 않는다. 채움 결과 확인이 필요하면 MCP `fill_form`의 `mask_values` 마스킹 verify를 쓴다.
+3. 같은 라벨이 2곳 이상이면 **모든 칸에 채운다**. 반복 라벨 양식 오염이 걱정되면 CLI `--require-unique`로 스칼라 라벨이 2곳+ 매칭될 때 거부(rejected 보고)시킨다(배열 값은 예외). 아니면 값을 배열로 주거나 어느 칸인지 확인 후 채운다.
+4. 날짜·전화·주민등록번호 등 칸 모양 변환은 CLI `--formats '{"날짜":"yy.mm.dd","주민등록번호":"rrn:masked"}'`(라벨→포맷 JSON)로 지정한다. 3.x에선 MCP 전용이었으나 4.x부터 CLI에 있다.
+5. 기본 출력은 원본 글꼴·정렬 보존(`--format hwpx-preserve`, 기본값). `-o` 확장자(`.hwpx`/`.md`)로도 출력 포맷이 결정된다.
+6. 주민번호·계좌 등 채운 값은 응답에 되풀이하지 않는다. 값 노출 없이 채움만 확인하려면 CLI `--mask`(출력 파일 없이 안내만 stdout).
 
 ## seal (도장 배치)
 
 앵커 문구("(인)" 등) 위/옆에 이미지를 글 앞 부유로 얹는다 — 표·페이지가 밀리지 않음.
-같은 앵커 여럿이면 `-n <0-based>`, 위치 보정 `--dx`/`--dy`(mm), 크기 `--size-mm`. 투명 PNG 권장. HWPX 전용.
+같은 앵커 여럿이면 `-n <0-based>`, 위치 보정 `--dx`/`--dy`(mm), 크기 `--size-mm`, 배치 방식 `--mode overlap|right|auto`(기본 auto). 투명 PNG 권장. HWPX 전용.
 중첩표·글상자·복잡 rowSpan은 근사 배치(warnings 고지) — 배치 후 `render --reflow`로 확인.
 
 ## generate (볼트 템플릿이 없을 때만)
 
-- 프리셋: `기안문`·`보고서`·`계획서`·`통지`·`회의록`. 번호 목록이 공문서 항목부호 8단계로 자동 변환, 함초롬바탕 표준 서식.
+- 프리셋(기본 `기안문`): `기안문`·`보고서`·`계획서`·`통지`·`회의록`·`개조식`(표지·목차·장헤더 자동)·`보도자료`. 영문 별칭도 됨(official/report/plan/notice/minutes/gaejosik/press). 번호 목록이 공문서 항목부호 8단계로 자동 변환, 함초롬바탕 표준 서식.
 - 표는 GFM 파이프표, display 수식 `$$...$$`은 네이티브 `<hp:equation>`.
 - ` ```chart ` 펜스 → 한컴 네이티브 차트 (type/cat/계열 라인, 펜스 안 주석 금지 — 값으로 오인됨).
+- 표 서식은 `--profile 양식.json`으로 기관 양식 재현(아래 "서식 프로필" 절).
+- 공문 세부 옵션이 풍부하다: 결재란 `--approval 담당,팀장,과장`, 기안문 두문·결문 `--doc-head`·`--doc-foot`, 공고 `--notice-head`, 보도자료 `--press-head`, 표지 `--org`·`--date`, 쪽번호·끝표시 `--page-numbers`·`--end-mark`. 전체는 `generate --help`.
+- 생성 시 공문 표기법 검수(lint)가 자동으로 돌아 경고를 표시한다 (실측 2026-07: `[TIME_24H]` 등) — 산출은 막지 않으니 경고를 읽고 필요하면 md를 고쳐 재생성.
 - 생성 후 반드시 `validate` 통과 확인.
 
 ## 서식 프로필 (기관 양식의 표 서식 재현)
 
 레퍼런스 hwpx에서 표의 시각 서식(괘선·음영·열 너비·셀 글꼴)만 JSON으로 추출해 generate 때 재현한다.
 내용·개인정보 없이 서식만 담기므로, 학교 양식을 프로필 JSON으로 `9_형식/templates/`에 보관·재사용할 수 있다.
-CLI 옵션은 아직 없고 라이브러리 API만 있다 — `.mjs` 스크립트로 실행 (프리셋과 병용 가능: 문단 서식은 프리셋, 표 서식은 프로필):
+4.x부터 CLI 명령으로 승격됐다 (3.x의 `.mjs` 스크립트는 더 필요 없다). 프리셋과 병용 가능(문단 서식은 프리셋, 표 서식은 프로필):
 
-```js
-import { hwpxToProfile, markdownToHwpx } from "kordoc"
-import { readFileSync, writeFileSync } from "node:fs"
-// ① 추출 (양식당 1회): 학교 양식 hwpx → 프로필 JSON
-writeFileSync("양식.profile.json", JSON.stringify(await hwpxToProfile(readFileSync("학교양식.hwpx"))))
-// ② 적용: md의 N번째 표에 프로필의 N번째 표 서식이 입혀진다 (행·열 수가 일치할 때만 — 불일치 시 무시+경고)
-const profile = JSON.parse(readFileSync("양식.profile.json", "utf8"))
-writeFileSync("결과.hwpx", await markdownToHwpx(readFileSync("초안.md", "utf8"), { profile }))
+```powershell
+# ① 추출 (양식당 1회): 학교 양식 hwpx → 프로필 JSON
+npx -y kordoc@^4 profile 학교양식.hwpx -o 양식.profile.json
+# ② 적용: md의 N번째 표에 프로필의 N번째 표 서식이 입혀진다 (행·열 수가 일치할 때만 — 불일치 시 무시+경고)
+npx -y kordoc@^4 generate 초안.md -o 결과.hwpx --preset 보고서 --profile 양식.profile.json
 ```
+
+## redact (개인정보 서식 보존 마스킹)
+
+주민번호·전화·이메일·카드·계좌를 탐지해 마스킹한다. HWPX/HWP는 **원본 서식 그대로 patch**, 그 외 포맷은 마스킹된 md 출력.
+
+- 기본 룰 `rrn,phone,email,card,account` (여권·운전면허는 `--rules`로 opt-in), 마스크 문자 `--mask-char ●`.
+- **먼저 `--dry-run`으로 탐지 리포트만** 보고 오탐·누락을 확인한다. 자동 검출 보조 도구이므로 결과는 사람이 최종 확인 — 이미지 속 텍스트는 못 잡는다.
+- 용도: `0_원본/`에 넣기 전, 학생 개인정보가 섞인 문서를 서식 유지한 채 익명화. (수집은 여전히 수동 — 마스킹만 돕고 자동 투입하지 않는다.)
+
+## lint (공문 표기법 검수)
+
+`npx -y kordoc@^4 lint 초안.md` — 날짜·시간·금액·붙임 등 행정업무운영 편람 표기법을 검사한다(md/txt, `-`=stdin). error가 있으면 exit 1, `--json`으로 기계 판독. 공문·보고서 산출 전 표기 점검용.
 
 ## 함정
 
