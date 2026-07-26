@@ -1,0 +1,4 @@
+interface:
+  display_name: "Second Brain"
+  short_description: "내 판단 기준·남의 자료·개인정보 이미지를 분리 관리하는 개인화 볼트"
+  default_prompt: "$second-brain 스킬로 이 폴더를 초기화하고, 0_원본은 컴파일하되 5_규범자료·6_참고자료는 파싱만 하며 7_개인정보이미지는 문서 작성용으로 분리해줘."

@@ -1,7 +1,7 @@
 # kordoc 사용법
 
 한국 문서 파싱·편집 엔진 ([chrisryugj/kordoc](https://github.com/chrisryugj/kordoc), MIT, npm).
-HWP 3.x/5.x·HWPX·HWPML·PDF·DOCX·XLS/XLSX → Markdown, 서식 보존 패치·채우기, 문서 비교, 도장 배치, 개인정보 마스킹(redact), 공문 표기법 검수(lint), 표 서식 프로필.
+HWP 3.x/5.x·HWPX·HWPML·PDF·DOCX·XLS/XLSX·PNG/JPG/WebP → Markdown, 로컬 한글 OCR, 서식 보존 패치·채우기, 문서 비교, 도장 배치, 개인정보 마스킹(redact), 공문 표기법 검수(lint), 표 서식 프로필.
 한컴 오피스·COM 불필요, 로컬 실행이라 문서가 외부로 나가지 않는다 (학생 개인정보 안전).
 
 ## 실행
@@ -17,13 +17,21 @@ Node 18+ 필요. 첫 호출만 다운로드로 느리고 이후 캐시. `ECOMPRO
 없어지고 MCP 전용 기능(`compare_documents`, 세분 파싱 `parse_table`·`parse_metadata` 등)을 쓸 수 있다.
 **3.x에서 MCP 전용이던 fill 가드(`--require-unique`·`--formats`·`--mask`)와 서식 프로필(`profile`)은 4.x부터 CLI에 편입돼 MCP 없이도 쓴다.**
 
+### 버전 정책
+
+- `@^4`는 실행할 때 최신 4.x를 사용하고 5.x로는 넘어가지 않는다.
+- 작업 재현성을 위해 파싱 배치 시작 시 `npx -y kordoc@^4 --version`을 한 번 확인하고 각 파싱본의 `도구-버전`에 기록한다.
+- "세컨드브레인 상태/업그레이드" 때만 `npm view kordoc version`으로 전체 최신판을 확인한다. 최신판이 5.x 이상이어도 자동 전환하지 않고 공식 변경 기록과 대표 문서 테스트 후 지침·호환 범위·시스템 버전을 함께 올린다.
+
 ## 명령 치트시트
 
 | 작업 | 명령 |
 |---|---|
-| 문서 → Markdown | `npx -y kordoc@^4 문서.hwp -o 문서.md` (hwpx·pdf·docx·xls 동일) |
+| 문서 → Markdown | `npx -y kordoc@^4 문서.hwp -o 문서.md` (hwpx·pdf·docx·xls·이미지 동일) |
 | 페이지 범위 | `-p 1-3` 또는 `-p 1,3,5` |
 | 구조화 JSON | `--format json` (blocks+metadata) · `--format chunks` (RAG용 위계 청크) |
+| 스캔 PDF 본문 OCR | `--ocr` (필요 페이지만 로컬 PP-OCRv5, 첫 사용 시 모델 ~18MB) · `--ocr-force` (전 페이지 강제) |
+| 이미지 OCR | PNG·JPG·WebP 파일을 직접 입력 — OCR 자동 적용 |
 | PDF 수식 OCR | `--formula-ocr` (첫 사용 시 모델 ~155MB 자동 다운로드, `check-formula-models`로 상태 확인) |
 | 서식 필드 목록 | `npx -y kordoc@^4 fill 서식.hwpx --dry-run` |
 | 서식 채우기 | `npx -y kordoc@^4 fill 서식.hwpx -j 값.json -o 결과.hwpx` (가드 `--require-unique`·`--formats`·`--mask`) |
@@ -43,7 +51,8 @@ Node 18+ 필요. 첫 호출만 다운로드로 느리고 이후 캐시. `ECOMPRO
 - 병합·중첩 표는 GFM으로 표현이 안 되므로 HTML `<table>`(colspan/rowspan)로 나온다 — 그대로 다룬다.
 - 표 오른쪽 끝의 빈 열(서식 입력란)은 기본으로 트림된다 — 그 칸을 살려야 하면 `--keep-empty-cols` (#47).
 - 수식은 `$...$` / `$$...$$` LaTeX.
-- PDF는 텍스트층 품질 신호를 계산한다 — `needsOcr`이면 스캔/손상 PDF라는 뜻 (본문 텍스트 OCR은 미내장, 사용자에게 알린다). 단 **수식만은** `--formula-ocr`로 OCR 가능.
+- PDF는 텍스트층 품질 신호를 계산한다. `needsOcr`이면 `--ocr`로 다시 파싱한다 — 필요한 페이지만 내장 PP-OCRv5로 로컬 인식하고 정상 페이지는 기존 텍스트를 유지한다. 텍스트층이 있지만 내용이 깨져 자동 판정이 놓친 경우에만 `--ocr-force`. 수식은 별도 `--formula-ocr`.
+- PNG·JPG·WebP는 파일을 직접 입력하면 OCR이 자동 적용된다. 별도 PDF 변환이나 `--ocr` 플래그가 필요 없다.
 - PDF 머리글/바닥글은 자동 제거된다 (`--no-header-footer`로 끔). HWP5 러닝 헤더가 페이지마다 반복되면 `--dedupe-headers` (기본 off — 붙임별 재번호가 오삭제될 수 있어 주의).
 - 문서 속 이미지는 출력 폴더의 `images/`에 `image_001.png`식으로 저장된다 (4.x는 추출률이 크게 올라 HWPX/HWP5 100%, PDF 이미지도 PNG로 디코드). **함정 둘**: ① `-o` 단일 출력은 md 링크에 `images/` 접두사가 안 붙어 링크가 깨진다 (`-d` 모드만 붙음) ② 파일명 번호가 문서마다 1부터라 여러 문서를 같은 폴더로 파싱하면 서로 덮어쓴다 → 문서별 이미지 폴더로 분리하고 링크를 보정한다. HWP5는 `--inline-images`로 base64 인라인도 가능 (별도 파일 없음 — 타 포맷은 옵션 무시).
 - 여러 파일은 `-d 디렉토리/` 일괄 모드 — 단 출력명이 확장자를 뗀 `수업안.md`식이라 `수업안.hwp`·`수업안.pdf`가 공존하면 충돌한다. 출력명을 통제하려면 파일별 `-o`.
@@ -116,4 +125,4 @@ npx -y kordoc@^4 generate 초안.md -o 결과.hwpx --preset 보고서 --profile 
 
 - 암호 보호·DRM 배포본은 파싱 불가 → 이때만 한컴 COM 폴백 (`scripts/convert_hwp.py`).
 - `.hwp`(바이너리)와 `.hwpx`(ZIP/XML)는 다른 포맷. fill/generate 산출물은 항상 HWPX지만 **patch만은 원본 포맷을 유지**한다 (`.hwp`→`.hwp`).
-- 표가 깨져 보이는 PDF는 대부분 스캔본/텍스트층 손상 — 품질 신호를 근거로 설명한다.
+- 표가 깨져 보이는 PDF는 대부분 스캔본/텍스트층 손상 — 품질 신호를 확인하고 `--ocr`로 재파싱한다. 이미지 서식은 직접 입력해 OCR한다.
