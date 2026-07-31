@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Insert a handwritten signature image into an HWPX form.
+"""Internal HWPX image writer used by place_signature.py.
 
-This script edits the HWPX ZIP/XML package directly. It avoids COM
-InsertPicture and avoids fragile PowerShell `python -c` XML string quoting.
+Do not route ordinary HWP/HWPX work or direct user requests to this module.
+The public workflow is Kordoc for documents and place_signature.py for an
+approved signature or stamp.
 """
 
 from __future__ import annotations
@@ -20,6 +21,9 @@ from xml.etree import ElementTree
 
 
 HWPUNIT_PER_MM = 7200 / 25.4
+# HWPUNIT is 1/7200 inch. Hancom treats embedded bitmaps as 96 dpi, so one
+# source pixel is 7200/96 = 75 HWPUNIT in the image coordinate space.
+HWPUNIT_PER_PX = 75
 RUN_RE = re.compile(r"<hp:run\b.*?</hp:run>|<hp:run\b[^>]*/>", re.DOTALL)
 PARA_RE = re.compile(r"<hp:p\b.*?</hp:p>", re.DOTALL)
 
@@ -36,6 +40,10 @@ def image_size(path: Path) -> tuple[int, int]:
     data = path.read_bytes()
     if data.startswith(b"\x89PNG\r\n\x1a\n"):
         return struct.unpack(">II", data[16:24])
+    if data.startswith(b"BM") and len(data) >= 26:
+        width, height = struct.unpack("<ii", data[18:26])
+        if width > 0 and height != 0:
+            return width, abs(height)
     if data.startswith(b"\xff\xd8"):
         i = 2
         while i < len(data):
@@ -111,6 +119,28 @@ def attr_value(xml: str, name: str, default: str) -> str:
     return match.group(2) if match else default
 
 
+def char_pr_height_pt(header_xml: str, char_pr_id: str) -> float | None:
+    """Return the font size in points for a charPr id, or None if absent."""
+    match = re.search(rf'<hh:charPr\b[^>]*\bid="{char_pr_id}"[^>]*\bheight="(\d+)"', header_xml)
+    if not match:
+        return None
+    return int(match.group(1)) / 100.0
+
+
+def estimate_text_width(text: str, pt: float) -> int:
+    """Estimate text advance in HWPUNIT for optional debug placement."""
+    em = pt * 100.0
+    width = 0.0
+    for char in text:
+        if char == "\t":
+            width += em * 4
+        elif ord(char) > 0x2000:
+            width += em
+        else:
+            width += em * 0.5
+    return round(width)
+
+
 def make_pic_run(
     binary_id: str,
     char_pr: str,
@@ -118,41 +148,65 @@ def make_pic_run(
     height: int,
     pic_id: int,
     inst_id: int,
+    img_px: tuple[int, int],
+    placement: str = "inline",
+    vert_offset: int = 0,
+    horz_offset: int = 0,
+    z_order: int = 0,
 ) -> str:
-    cx = width // 2
-    cy = height // 2
+    """Build a complete HWPX picture run without cropping the source image."""
+    pixel_width, pixel_height = img_px
+    natural_width = pixel_width * HWPUNIT_PER_PX
+    natural_height = pixel_height * HWPUNIT_PER_PX
+    scale = width / natural_width if natural_width else 1.0
+
+    if placement == "overlay":
+        text_wrap = "BEHIND_TEXT"
+        position = (
+            f'<hp:pos treatAsChar="0" affectLSpacing="0" flowWithText="1" allowOverlap="0" '
+            f'holdAnchorAndSO="0" vertRelTo="PARA" horzRelTo="COLUMN" '
+            f'vertAlign="TOP" horzAlign="LEFT" '
+            f'vertOffset="{vert_offset}" horzOffset="{horz_offset}"/>'
+        )
+    else:
+        text_wrap = "TOP_AND_BOTTOM"
+        position = (
+            f'<hp:pos treatAsChar="1" affectLSpacing="0" flowWithText="1" allowOverlap="0" '
+            f'holdAnchorAndSO="0" vertRelTo="PARA" horzRelTo="COLUMN" '
+            f'vertAlign="TOP" horzAlign="LEFT" vertOffset="0" horzOffset="0"/>'
+        )
+
     return (
         f'<hp:run charPrIDRef="{char_pr}">'
-        f'<hp:pic id="{pic_id}" zOrder="0" numberingType="PICTURE" '
-        f'textWrap="TOP_AND_BOTTOM" textFlow="BOTH_SIDES" lock="0" dropcapstyle="None" '
+        f'<hp:pic id="{pic_id}" zOrder="{z_order}" numberingType="PICTURE" '
+        f'textWrap="{text_wrap}" textFlow="BOTH_SIDES" lock="0" dropcapstyle="None" '
         f'href="" groupLevel="0" instid="{inst_id}" reverse="0">'
         f'<hp:offset x="0" y="0"/>'
-        f'<hp:orgSz width="{width}" height="{height}"/>'
+        f'<hp:orgSz width="{natural_width}" height="{natural_height}"/>'
         f'<hp:curSz width="{width}" height="{height}"/>'
         f'<hp:flip horizontal="0" vertical="0"/>'
-        f'<hp:rotationInfo angle="0" centerX="{cx}" centerY="{cy}" rotateimage="0"/>'
+        f'<hp:rotationInfo angle="0"/>'
         f'<hp:renderingInfo>'
         f'<hc:transMatrix e1="1" e2="0" e3="0" e4="0" e5="1" e6="0"/>'
-        f'<hc:scaMatrix e1="1" e2="0" e3="0" e4="0" e5="1" e6="0"/>'
+        f'<hc:scaMatrix e1="{scale:.6f}" e2="0" e3="0" e4="0" e5="{scale:.6f}" e6="0"/>'
         f'<hc:rotMatrix e1="1" e2="0" e3="0" e4="0" e5="1" e6="0"/>'
         f'</hp:renderingInfo>'
-        f'<hc:img binaryItemIDRef="{binary_id}" bright="0" contrast="0" effect="REAL_PIC" alpha="0"/>'
-        f'<hp:imgRect><hc:pt0 x="0" y="0"/><hc:pt1 x="{width}" y="0"/>'
-        f'<hc:pt2 x="{width}" y="{height}"/><hc:pt3 x="0" y="{height}"/></hp:imgRect>'
-        f'<hp:imgClip left="0" right="{width}" top="0" bottom="{height}"/>'
+        f'<hp:imgRect><hc:pt0 x="0" y="0"/><hc:pt1 x="{natural_width}" y="0"/>'
+        f'<hc:pt2 x="{natural_width}" y="{natural_height}"/>'
+        f'<hc:pt3 x="0" y="{natural_height}"/></hp:imgRect>'
+        f'<hp:imgClip left="0" right="{natural_width}" top="0" bottom="{natural_height}"/>'
         f'<hp:inMargin left="0" right="0" top="0" bottom="0"/>'
-        f'<hp:imgDim dimwidth="{width}" dimheight="{height}"/>'
+        f'<hc:img binaryItemIDRef="{binary_id}" bright="0" contrast="0" '
+        f'effect="REAL_PIC" alpha="0"/>'
         f'<hp:effects/>'
         f'<hp:sz width="{width}" widthRelTo="ABSOLUTE" height="{height}" heightRelTo="ABSOLUTE" protect="0"/>'
-        f'<hp:pos treatAsChar="1" affectLSpacing="0" flowWithText="1" allowOverlap="0" '
-        f'holdAnchorAndSO="0" vertRelTo="PARA" horzRelTo="COLUMN" vertAlign="TOP" horzAlign="LEFT" '
-        f'vertOffset="0" horzOffset="0"/>'
+        + position +
         f'<hp:outMargin left="0" right="0" top="0" bottom="0"/>'
         f'</hp:pic><hp:t/></hp:run>'
     )
 
 
-def find_insert_point(section: str, anchor: str, occurrence: str) -> tuple[int, str, str]:
+def find_insert_point(section: str, anchor: str, occurrence: str) -> tuple[int, str, str, str]:
     matches: list[tuple[re.Match[str], str]] = []
     for para_match in PARA_RE.finditer(section):
         para_xml = para_match.group(0)
@@ -176,7 +230,27 @@ def find_insert_point(section: str, anchor: str, occurrence: str) -> tuple[int, 
     run_xml = target_run.group(0)
     char_pr = attr_value(run_xml, "charPrIDRef", "13")
     absolute_insert_pos = para_match.start() + target_run.end()
-    return absolute_insert_pos, char_pr, visible_text(para_xml).strip()
+    text_before = visible_text(para_xml[:target_run.end()])
+    return absolute_insert_pos, char_pr, visible_text(para_xml).strip(), text_before
+
+
+def find_para_anchor(section: str, para_text: str, occurrence: str) -> tuple[int, str]:
+    """Return the first run position of a unique paragraph used as float anchor."""
+    matches = [match for match in PARA_RE.finditer(section) if para_text in visible_text(match.group(0))]
+    if not matches:
+        raise ValueError(f"Anchor paragraph not found: {para_text}")
+    paragraph_match = matches[0] if occurrence == "first" else matches[-1]
+    paragraph_xml = paragraph_match.group(0)
+    run_match = RUN_RE.search(paragraph_xml)
+    if not run_match:
+        raise ValueError("Anchor paragraph has no hp:run element.")
+    char_pr = attr_value(run_match.group(0), "charPrIDRef", "13")
+    return paragraph_match.start() + run_match.start(), char_pr
+
+
+def max_z_order(section: str) -> int:
+    values = [int(value) for value in re.findall(r'\bzOrder="(-?\d+)"', section)]
+    return max(values) if values else 0
 
 
 def validate_xml_members(hwpx_path: Path) -> None:
@@ -202,14 +276,23 @@ def insert_signature(
     occurrence: str,
     width_hwpunit: int,
     overwrite: bool,
+    placement: str = "inline",
+    vert_offset_hwpunit: int | None = None,
+    horz_offset_hwpunit: int | None = None,
+    fit_line: float | None = None,
+    anchor_para: str | None = None,
 ) -> tuple[Path, str, str, int, int]:
     source = source.resolve()
     signature = signature.resolve()
     output = output.resolve()
     if source == output:
         raise ValueError("Output path must be different from source path.")
+    if source.suffix.lower() != ".hwpx" or output.suffix.lower() != ".hwpx":
+        raise ValueError("Source and output must both be .hwpx files.")
     if output.exists() and not overwrite:
         raise FileExistsError(f"Output already exists. Use --overwrite or choose another path: {output}")
+    if width_hwpunit <= 0:
+        raise ValueError("Signature width must be positive.")
     output.parent.mkdir(parents=True, exist_ok=True)
 
     img_w, img_h = image_size(signature)
@@ -219,6 +302,7 @@ def insert_signature(
         names = set(zin.namelist())
         section = zin.read("Contents/section0.xml").decode("utf-8")
         content_hpf = zin.read("Contents/content.hpf").decode("utf-8")
+        header_xml = zin.read("Contents/header.xml").decode("utf-8")
 
         binary_id = unique_manifest_id(content_hpf)
         ext = signature.suffix.lower() or ".png"
@@ -232,10 +316,52 @@ def insert_signature(
             raise ValueError(f"Unsupported signature image extension: {ext}")
         bindata_name = unique_bindata_name(names, "signature", ext)
 
-        insert_pos, char_pr, matched_text = find_insert_point(section, anchor, occurrence)
+        if anchor_para:
+            insert_pos, char_pr = find_para_anchor(section, anchor_para, occurrence)
+            matched_text, text_before = anchor_para, ""
+        else:
+            insert_pos, char_pr, matched_text, text_before = find_insert_point(
+                section, anchor, occurrence
+            )
+
+        point_size = char_pr_height_pt(header_xml, char_pr) or 10.0
+        line_height = round(point_size * 100)
+        if fit_line is not None:
+            if fit_line <= 0:
+                raise ValueError("--fit-line must be positive.")
+            height_hwpunit = round(line_height * fit_line)
+            width_hwpunit = round(height_hwpunit * img_w / img_h)
+
+        if placement == "overlay":
+            if horz_offset_hwpunit is None:
+                if anchor_para:
+                    raise ValueError(
+                        "--anchor-para requires an explicit horizontal offset."
+                    )
+                horz_offset_hwpunit = round(estimate_text_width(text_before, point_size) * 1.1)
+            if vert_offset_hwpunit is None:
+                vert_offset_hwpunit = 0
+        elif placement == "inline":
+            horz_offset_hwpunit = horz_offset_hwpunit or 0
+            vert_offset_hwpunit = vert_offset_hwpunit or 0
+        else:
+            raise ValueError(f"Unsupported placement: {placement}")
+
         pic_id = unique_number(section, 900000001)
         inst_id = unique_number(section, pic_id + 1)
-        pic_xml = make_pic_run(binary_id, char_pr, width_hwpunit, height_hwpunit, pic_id, inst_id)
+        pic_xml = make_pic_run(
+            binary_id,
+            char_pr,
+            width_hwpunit,
+            height_hwpunit,
+            pic_id,
+            inst_id,
+            img_px=(img_w, img_h),
+            placement=placement,
+            vert_offset=vert_offset_hwpunit,
+            horz_offset=horz_offset_hwpunit,
+            z_order=max_z_order(section) + 1 if placement == "overlay" else 0,
+        )
         section_new = section[:insert_pos] + pic_xml + section[insert_pos:]
 
         manifest_item = (
@@ -279,7 +405,9 @@ def insert_signature(
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Insert a signature image into an HWPX form.")
+    parser = argparse.ArgumentParser(
+        description="Internal HWPX image writer. Normal workflow: place_signature.py"
+    )
     parser.add_argument("source", help="Source .hwpx file")
     parser.add_argument("signature", help="Signature image file (.png/.jpg/.bmp)")
     parser.add_argument("--output", help="Output .hwpx path. Defaults to source folder with _완성본 suffix.")
@@ -289,6 +417,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--width-mm", type=float, default=25.0, help="Displayed signature width in millimeters.")
     parser.add_argument("--width-hwpunit", type=int, help="Displayed signature width in HWPUNIT. Overrides --width-mm.")
     parser.add_argument("--overwrite", action="store_true", help="Overwrite --output if it already exists.")
+    parser.add_argument("--overlay", action="store_true")
+    parser.add_argument("--fit-line", type=float, nargs="?", const=1.0, metavar="FACTOR")
+    parser.add_argument("--anchor-para", metavar="TEXT")
+    parser.add_argument("--vert-offset-mm", type=float)
+    parser.add_argument("--horz-offset-mm", type=float)
     return parser.parse_args(argv)
 
 
@@ -313,7 +446,21 @@ def main(argv: list[str] | None = None) -> int:
         occurrence=args.occurrence,
         width_hwpunit=width_hwpunit,
         overwrite=args.overwrite,
+        placement="overlay" if args.overlay else "inline",
+        vert_offset_hwpunit=(
+            round(args.vert_offset_mm * HWPUNIT_PER_MM)
+            if args.vert_offset_mm is not None
+            else None
+        ),
+        horz_offset_hwpunit=(
+            round(args.horz_offset_mm * HWPUNIT_PER_MM)
+            if args.horz_offset_mm is not None
+            else None
+        ),
+        fit_line=args.fit_line,
+        anchor_para=args.anchor_para,
     )
+    print(f"placement={'overlay' if args.overlay else 'inline'}")
     print(f"output={result}")
     print(f"anchor={anchor}")
     print(f"binary_id={binary_id}")

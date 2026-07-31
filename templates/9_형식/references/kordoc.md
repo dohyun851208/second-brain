@@ -1,7 +1,7 @@
 # kordoc 사용법
 
 한국 문서 파싱·편집 엔진 ([chrisryugj/kordoc](https://github.com/chrisryugj/kordoc), MIT, npm).
-HWP 3.x/5.x·HWPX·HWPML·PDF·DOCX·XLS/XLSX·PNG/JPG/WebP → Markdown, 로컬 한글 OCR, 서식 보존 패치·채우기, 문서 비교, 도장 배치, 개인정보 마스킹(redact), 공문 표기법 검수(lint), 표 서식 프로필.
+HWP 3.x/5.x·HWPX·HWPML·PDF·DOCX·XLS/XLSX·PNG/JPG/WebP → Markdown, 로컬 한글 OCR, 서식 보존 패치·채우기, 문서 비교, 개인정보 마스킹(redact), 공문 표기법 검수(lint), 표 서식 프로필.
 한컴 오피스·COM 불필요, 로컬 실행이라 문서가 외부로 나가지 않는다 (학생 개인정보 안전).
 
 ## 실행
@@ -38,13 +38,13 @@ Node 18+ 필요. 첫 호출만 다운로드로 느리고 이후 캐시. `ECOMPRO
 | 표 빈 열 보존 | `--keep-empty-cols` (서식 입력란인 오른쪽 끝 빈 열이 트림되지 않게) |
 | 기존 문서 내용 수정 | `npx -y kordoc@^4 patch 원본.hwpx 편집.md -o 결과.hwpx` (`.hwp`도 가능 — 원본 포맷 유지) |
 | 문서 비교 | MCP `compare_documents` (CLI엔 없음 — 양쪽을 md로 파싱해 diff해도 됨) |
-| 공문서 생성 (폴백) | `npx -y kordoc@^4 generate 초안.md -o 결과.hwpx --preset 보고서` |
+| 새 공문서 생성 | `npx -y kordoc@^4 generate 초안.md -o 결과.hwpx --preset 보고서` |
 | 구조 검증 | `npx -y kordoc@^4 validate 결과.hwpx` |
 | 표 서식 프로필 | `npx -y kordoc@^4 profile 참조.hwpx -o 서식.json` → `generate --profile 서식.json` |
 | 개인정보 마스킹 | `npx -y kordoc@^4 redact 문서.hwpx -o 결과.hwpx` (`--dry-run`으로 먼저 탐지) |
 | 공문 표기법 검수 | `npx -y kordoc@^4 lint 초안.md` (편람 표기법, error면 exit 1) |
-| 도장/서명 배치 | `npx -y kordoc@^4 seal 문서.hwpx --image 도장.png --anchor "(인)" -o 결과.hwpx` |
-| 조판 미리보기 | `npx -y kordoc@^4 render 문서.hwpx -o 미리보기.svg` (생성/패치본은 `--reflow`, 형광펜 `--highlight 검색어`) |
+| 도장/서명 배치 | Second Brain에서는 `seal`을 쓰지 않고 `scripts/place_signature.py` 사용 |
+| 조판 미리보기 | `npx -y kordoc@^4 render 문서.hwpx -o 미리보기.svg` (reflow는 기본 활성화, 형광펜 `--highlight 검색어`) |
 
 ## 읽기 (파싱)
 
@@ -72,7 +72,8 @@ Node 18+ 필요. 첫 호출만 다운로드로 느리고 이후 캐시. `ECOMPRO
 0. **HWPX 전용으로 쓴다.** 스타일 보존(`hwpx-preserve`)은 원본 ZIP 직접 수정이라 HWPX에만 작동한다.
    `.hwp`를 넣으면 CLI는 조용히 `hwpx` 모드로 전환("HWPX가 아니므로 hwpx 모드로 전환합니다") —
    파싱한 내용을 새 HWPX 표로 **재구성**하므로 병합·열너비가 깨진다 (실측 확인). MCP `fill_form`도
-   `output_format: hwpx`면 동일한 재구성 경로다. `.hwp` 채우기는 한컴 COM으로 `.hwpx` 1회 변환 후 fill.
+   `output_format: hwpx`면 동일한 재구성 경로다. Kordoc 단일 경로에서는 `.hwp` 양식에 `fill`을 쓰거나 변환하지 않는다.
+   단순한 기존 텍스트 교체라면 `patch`를 사용하고, 양식 필드 채우기가 필요하면 HWPX 원본 제공을 요청한다.
 1. `--dry-run`으로 라벨 목록 먼저 파악.
 2. 값은 `-j 값.json` 권장 (`-f 'k=v'`는 셸 히스토리에 값 노출). 다중줄은 JSON 문자열 안 `\n`.
 3. 같은 라벨이 2곳 이상이면 **모든 칸에 채운다**. 반복 라벨 양식 오염이 걱정되면 CLI `--require-unique`로 스칼라 라벨이 2곳+ 매칭될 때 거부(rejected 보고)시킨다(배열 값은 예외). 아니면 값을 배열로 주거나 어느 칸인지 확인 후 채운다.
@@ -80,11 +81,11 @@ Node 18+ 필요. 첫 호출만 다운로드로 느리고 이후 캐시. `ECOMPRO
 5. 기본 출력은 원본 글꼴·정렬 보존(`--format hwpx-preserve`, 기본값). `-o` 확장자(`.hwpx`/`.md`)로도 출력 포맷이 결정된다.
 6. 주민번호·계좌 등 채운 값은 응답에 되풀이하지 않는다. 값 노출 없이 채움만 확인하려면 CLI `--mask`(출력 파일 없이 안내만 stdout).
 
-## seal (도장 배치)
+## seal (Second Brain에서는 사용하지 않음)
 
-앵커 문구("(인)" 등) 위/옆에 이미지를 글 앞 부유로 얹는다 — 표·페이지가 밀리지 않음.
-같은 앵커 여럿이면 `-n <0-based>`, 위치 보정 `--dx`/`--dy`(mm), 크기 `--size-mm`, 배치 방식 `--mode overlap|right|auto`(기본 auto). 투명 PNG 권장. HWPX 전용.
-중첩표·글상자·복잡 rowSpan은 근사 배치(warnings 고지) — 배치 후 `render --reflow`로 확인.
+Kordoc 자체에는 `seal` 기능이 있지만, Second Brain의 승인된 서명·도장 배치에는 사용하지 않는다.
+실제 양식 비교에서 서명 이미지의 비율·크기·정밀 위치가 제출본 기준에 미치지 못했으므로 `scripts/place_signature.py`의 한컴 렌더 실측 경로를 정본으로 사용한다.
+실측 경로를 실행할 수 없으면 `seal`로 자동 우회하지 않고 원본을 그대로 둔 채 필요한 조건을 알린다.
 
 ## generate (볼트 템플릿이 없을 때만)
 
@@ -99,7 +100,7 @@ Node 18+ 필요. 첫 호출만 다운로드로 느리고 이후 캐시. `ECOMPRO
 ## 서식 프로필 (기관 양식의 표 서식 재현)
 
 레퍼런스 hwpx에서 표의 시각 서식(괘선·음영·열 너비·셀 글꼴)만 JSON으로 추출해 generate 때 재현한다.
-내용·개인정보 없이 서식만 담기므로, 학교 양식을 프로필 JSON으로 `9_형식/templates/`에 보관·재사용할 수 있다.
+내용·개인정보 없이 서식만 담기므로, 필요할 때 볼트의 `9_형식/서식프로필/`을 만들어 프로필 JSON을 보관·재사용할 수 있다.
 4.x부터 CLI 명령으로 승격됐다 (3.x의 `.mjs` 스크립트는 더 필요 없다). 프리셋과 병용 가능(문단 서식은 프리셋, 표 서식은 프로필):
 
 ```powershell
@@ -123,6 +124,6 @@ npx -y kordoc@^4 generate 초안.md -o 결과.hwpx --preset 보고서 --profile 
 
 ## 함정
 
-- 암호 보호·DRM 배포본은 파싱 불가 → 이때만 한컴 COM 폴백 (`scripts/convert_hwp.py`).
+- 암호 보호·DRM 배포본처럼 Kordoc이 처리하지 못하는 파일은 원본을 그대로 두고 실패 이유를 보고한다. COM 변환이나 다른 도구로 자동 우회하지 않는다.
 - `.hwp`(바이너리)와 `.hwpx`(ZIP/XML)는 다른 포맷. fill/generate 산출물은 항상 HWPX지만 **patch만은 원본 포맷을 유지**한다 (`.hwp`→`.hwp`).
 - 표가 깨져 보이는 PDF는 대부분 스캔본/텍스트층 손상 — 품질 신호를 확인하고 `--ocr`로 재파싱한다. 이미지 서식은 직접 입력해 OCR한다.
