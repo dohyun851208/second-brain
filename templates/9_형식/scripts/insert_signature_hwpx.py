@@ -20,6 +20,9 @@ from xml.etree import ElementTree
 
 
 HWPUNIT_PER_MM = 7200 / 25.4
+# HWPUNIT is 1/7200 inch and 한글 treats embedded bitmaps as 96 dpi, so one
+# source pixel is 7200/96 = 75 HWPUNIT in the image's own coordinate space.
+HWPUNIT_PER_PX = 75
 RUN_RE = re.compile(r"<hp:run\b.*?</hp:run>|<hp:run\b[^>]*/>", re.DOTALL)
 PARA_RE = re.compile(r"<hp:p\b.*?</hp:p>", re.DOTALL)
 
@@ -111,6 +114,33 @@ def attr_value(xml: str, name: str, default: str) -> str:
     return match.group(2) if match else default
 
 
+def char_pr_height_pt(header_xml: str, char_pr_id: str) -> float | None:
+    """Return the font size in points for a charPr id, or None if not found."""
+    match = re.search(rf'<hh:charPr\b[^>]*\bid="{char_pr_id}"[^>]*\bheight="(\d+)"', header_xml)
+    if not match:
+        return None
+    return int(match.group(1)) / 100.0
+
+
+def estimate_text_width(text: str, pt: float) -> int:
+    """Rough advance width of `text` in HWPUNIT at `pt` size.
+
+    Hangul/CJK glyphs occupy about one em; ASCII and spaces about half.
+    Only used to place an overlay signature, which the caller can nudge
+    with --horz-offset-mm, so an approximation is enough.
+    """
+    em = pt * 100.0
+    width = 0.0
+    for ch in text:
+        if ch == "\t":
+            width += em * 4
+        elif ord(ch) > 0x2000:
+            width += em
+        else:
+            width += em * 0.5
+    return round(width)
+
+
 def make_pic_run(
     binary_id: str,
     char_pr: str,
@@ -118,41 +148,82 @@ def make_pic_run(
     height: int,
     pic_id: int,
     inst_id: int,
+    img_px: tuple[int, int],
+    placement: str = "inline",
+    vert_offset: int = 0,
+    horz_offset: int = 0,
+    z_order: int = 0,
 ) -> str:
-    cx = width // 2
-    cy = height // 2
+    """Build the <hp:run> that carries the picture.
+
+    HWPX keeps three different sizes and confusing them silently crops the image:
+
+    - ``orgSz`` / ``imgRect`` / ``imgClip`` live in the SOURCE image's own
+      coordinate space (pixels x 75, i.e. 96 dpi). ``imgClip`` is the region cut
+      OUT of that source, so it must span the whole image.
+    - ``curSz`` / ``sz`` are the size the picture is drawn at on the page.
+    - ``scaMatrix`` carries the ratio between the two.
+
+    Writing the display size into ``imgClip`` crops the source down to that
+    fraction of itself and stretches the fragment to fill the frame — a 20mm
+    signature off a 212px image then shows only its leftmost third.
+    """
+    px_w, px_h = img_px
+    nat_w, nat_h = px_w * HWPUNIT_PER_PX, px_h * HWPUNIT_PER_PX
+    scale = width / nat_w if nat_w else 1.0
+    if placement == "overlay":
+        # Float the signature behind the text so the line height is unchanged
+        # and the form's own "(서명)" marker stays readable on top of it.
+        # Horizontal position is measured from the column (table cell) edge, not
+        # the paragraph, so paragraph indentation cannot shift it.
+        text_wrap = "BEHIND_TEXT"
+        pos = (
+            f'<hp:pos treatAsChar="0" affectLSpacing="0" flowWithText="1" allowOverlap="0" '
+            f'holdAnchorAndSO="0" vertRelTo="PARA" horzRelTo="COLUMN" vertAlign="TOP" horzAlign="LEFT" '
+            f'vertOffset="{vert_offset}" horzOffset="{horz_offset}"/>'
+        )
+    else:
+        text_wrap = "TOP_AND_BOTTOM"
+        pos = (
+            f'<hp:pos treatAsChar="1" affectLSpacing="0" flowWithText="1" allowOverlap="0" '
+            f'holdAnchorAndSO="0" vertRelTo="PARA" horzRelTo="COLUMN" vertAlign="TOP" horzAlign="LEFT" '
+            f'vertOffset="0" horzOffset="0"/>'
+        )
     return (
         f'<hp:run charPrIDRef="{char_pr}">'
-        f'<hp:pic id="{pic_id}" zOrder="0" numberingType="PICTURE" '
-        f'textWrap="TOP_AND_BOTTOM" textFlow="BOTH_SIDES" lock="0" dropcapstyle="None" '
+        f'<hp:pic id="{pic_id}" zOrder="{z_order}" numberingType="PICTURE" '
+        f'textWrap="{text_wrap}" textFlow="BOTH_SIDES" lock="0" dropcapstyle="None" '
         f'href="" groupLevel="0" instid="{inst_id}" reverse="0">'
         f'<hp:offset x="0" y="0"/>'
-        f'<hp:orgSz width="{width}" height="{height}"/>'
+        f'<hp:orgSz width="{nat_w}" height="{nat_h}"/>'
         f'<hp:curSz width="{width}" height="{height}"/>'
         f'<hp:flip horizontal="0" vertical="0"/>'
-        f'<hp:rotationInfo angle="0" centerX="{cx}" centerY="{cy}" rotateimage="0"/>'
+        f'<hp:rotationInfo angle="0"/>'
         f'<hp:renderingInfo>'
         f'<hc:transMatrix e1="1" e2="0" e3="0" e4="0" e5="1" e6="0"/>'
-        f'<hc:scaMatrix e1="1" e2="0" e3="0" e4="0" e5="1" e6="0"/>'
+        f'<hc:scaMatrix e1="{scale:.6f}" e2="0" e3="0" e4="0" e5="{scale:.6f}" e6="0"/>'
         f'<hc:rotMatrix e1="1" e2="0" e3="0" e4="0" e5="1" e6="0"/>'
         f'</hp:renderingInfo>'
-        f'<hc:img binaryItemIDRef="{binary_id}" bright="0" contrast="0" effect="REAL_PIC" alpha="0"/>'
-        f'<hp:imgRect><hc:pt0 x="0" y="0"/><hc:pt1 x="{width}" y="0"/>'
-        f'<hc:pt2 x="{width}" y="{height}"/><hc:pt3 x="0" y="{height}"/></hp:imgRect>'
-        f'<hp:imgClip left="0" right="{width}" top="0" bottom="{height}"/>'
+        f'<hp:imgRect><hc:pt0 x="0" y="0"/><hc:pt1 x="{nat_w}" y="0"/>'
+        f'<hc:pt2 x="{nat_w}" y="{nat_h}"/><hc:pt3 x="0" y="{nat_h}"/></hp:imgRect>'
+        f'<hp:imgClip left="0" right="{nat_w}" top="0" bottom="{nat_h}"/>'
         f'<hp:inMargin left="0" right="0" top="0" bottom="0"/>'
-        f'<hp:imgDim dimwidth="{width}" dimheight="{height}"/>'
+        f'<hc:img binaryItemIDRef="{binary_id}" bright="0" contrast="0" effect="REAL_PIC" alpha="0"/>'
         f'<hp:effects/>'
         f'<hp:sz width="{width}" widthRelTo="ABSOLUTE" height="{height}" heightRelTo="ABSOLUTE" protect="0"/>'
-        f'<hp:pos treatAsChar="1" affectLSpacing="0" flowWithText="1" allowOverlap="0" '
-        f'holdAnchorAndSO="0" vertRelTo="PARA" horzRelTo="COLUMN" vertAlign="TOP" horzAlign="LEFT" '
-        f'vertOffset="0" horzOffset="0"/>'
+        + pos +
         f'<hp:outMargin left="0" right="0" top="0" bottom="0"/>'
         f'</hp:pic><hp:t/></hp:run>'
     )
 
 
-def find_insert_point(section: str, anchor: str, occurrence: str) -> tuple[int, str, str]:
+def find_insert_point(section: str, anchor: str, occurrence: str) -> tuple[int, str, str, str]:
+    """Locate where to splice the picture run.
+
+    Returns (absolute offset, charPrIDRef, paragraph text, text before the pic).
+    The last item is the visible text preceding the insertion point inside the
+    paragraph; overlay placement uses it to estimate the horizontal offset.
+    """
     matches: list[tuple[re.Match[str], str]] = []
     for para_match in PARA_RE.finditer(section):
         para_xml = para_match.group(0)
@@ -176,7 +247,34 @@ def find_insert_point(section: str, anchor: str, occurrence: str) -> tuple[int, 
     run_xml = target_run.group(0)
     char_pr = attr_value(run_xml, "charPrIDRef", "13")
     absolute_insert_pos = para_match.start() + target_run.end()
-    return absolute_insert_pos, char_pr, visible_text(para_xml).strip()
+    text_before = visible_text(para_xml[:target_run.end()])
+    return absolute_insert_pos, char_pr, visible_text(para_xml).strip(), text_before
+
+
+def find_para_anchor(section: str, para_text: str, occurrence: str) -> tuple[int, str]:
+    """Anchor the picture to the paragraph containing `para_text`.
+
+    Returns (offset of that paragraph's first run, charPrIDRef). This mirrors
+    what 한글 does when a picture is inserted with the cursor on a line and then
+    dragged: the anchor stays on the paragraph and only the offsets change. It
+    leaves the paragraph's runs untouched, so no run splitting is needed.
+    """
+    matches = [m for m in PARA_RE.finditer(section) if para_text in visible_text(m.group(0))]
+    if not matches:
+        raise ValueError(f"Anchor paragraph not found: {para_text}")
+    para_match = matches[0] if occurrence == "first" else matches[-1]
+    para_xml = para_match.group(0)
+
+    run_match = RUN_RE.search(para_xml)
+    if not run_match:
+        raise ValueError("Anchor paragraph has no hp:run element.")
+    char_pr = attr_value(run_match.group(0), "charPrIDRef", "13")
+    return para_match.start() + run_match.start(), char_pr
+
+
+def max_z_order(section: str) -> int:
+    values = [int(v) for v in re.findall(r'\bzOrder="(-?\d+)"', section)]
+    return max(values) if values else 0
 
 
 def validate_xml_members(hwpx_path: Path) -> None:
@@ -202,6 +300,11 @@ def insert_signature(
     occurrence: str,
     width_hwpunit: int,
     overwrite: bool,
+    placement: str = "inline",
+    vert_offset_hwpunit: int | None = None,
+    horz_offset_hwpunit: int | None = None,
+    fit_line: float | None = None,
+    anchor_para: str | None = None,
 ) -> tuple[Path, str, str, int, int]:
     source = source.resolve()
     signature = signature.resolve()
@@ -219,6 +322,7 @@ def insert_signature(
         names = set(zin.namelist())
         section = zin.read("Contents/section0.xml").decode("utf-8")
         content_hpf = zin.read("Contents/content.hpf").decode("utf-8")
+        header_xml = zin.read("Contents/header.xml").decode("utf-8")
 
         binary_id = unique_manifest_id(content_hpf)
         ext = signature.suffix.lower() or ".png"
@@ -232,10 +336,65 @@ def insert_signature(
             raise ValueError(f"Unsupported signature image extension: {ext}")
         bindata_name = unique_bindata_name(names, "signature", ext)
 
-        insert_pos, char_pr, matched_text = find_insert_point(section, anchor, occurrence)
+        if anchor_para:
+            insert_pos, char_pr = find_para_anchor(section, anchor_para, occurrence)
+            matched_text, text_before = anchor_para, ""
+        else:
+            insert_pos, char_pr, matched_text, text_before = find_insert_point(section, anchor, occurrence)
+
+        # Line height of the anchored text decides whether the signature fits.
+        pt = char_pr_height_pt(header_xml, char_pr) or 10.0
+        line_h = round(pt * 100)
+
+        if fit_line is not None:
+            height_hwpunit = round(line_h * fit_line)
+            width_hwpunit = round(height_hwpunit * img_w / img_h)
+            print(f"fit_line: 글자 {pt}pt 기준으로 축소 -> {width_hwpunit}x{height_hwpunit} HWPUNIT")
+
+        ratio = height_hwpunit / line_h
+        if placement == "inline" and ratio > 1.2:
+            remedy = "--overlay 로 띄우거나 --fit-line 값을 낮추세요." if fit_line is not None \
+                else "--overlay 또는 --fit-line 을 고려하세요."
+            print(
+                f"WARN: 서명 높이가 글자 높이의 {ratio:.1f}배입니다. inline 배치는 줄 높이를 밀어내"
+                f" 1쪽 고정 양식이 다음 쪽으로 넘칠 수 있습니다. {remedy}"
+            )
+
+        if placement == "overlay":
+            if horz_offset_hwpunit is None:
+                if anchor_para:
+                    raise ValueError(
+                        "--anchor-para 사용 시에는 --horz-offset-mm 을 함께 주세요. "
+                        "앵커 문단만으로는 가로 위치를 알 수 없습니다."
+                    )
+                # Estimated from the text preceding the signature. Roughly 10%
+                # low against 한글's own layout, so scale it up a little.
+                horz_offset_hwpunit = round(estimate_text_width(text_before, pt) * 1.1)
+                print(f"NOTE: 가로 위치는 추정값입니다. 어긋나면 --horz-offset-mm 으로 직접 주세요.")
+            if vert_offset_hwpunit is None:
+                # Hang from the top of the anchored line: a signature sits on the
+                # name line, never above it. Negative values would ride up into
+                # the previous line.
+                vert_offset_hwpunit = 0
+            print(
+                f"overlay: BEHIND_TEXT, 줄 높이 유지. 위치 "
+                f"가로 {horz_offset_hwpunit/HWPUNIT_PER_MM:.1f}mm (단 좌측 기준), "
+                f"세로 {vert_offset_hwpunit/HWPUNIT_PER_MM:+.1f}mm (앵커 문단 상단 기준)"
+            )
+        else:
+            horz_offset_hwpunit = horz_offset_hwpunit or 0
+            vert_offset_hwpunit = vert_offset_hwpunit or 0
+
         pic_id = unique_number(section, 900000001)
         inst_id = unique_number(section, pic_id + 1)
-        pic_xml = make_pic_run(binary_id, char_pr, width_hwpunit, height_hwpunit, pic_id, inst_id)
+        pic_xml = make_pic_run(
+            binary_id, char_pr, width_hwpunit, height_hwpunit, pic_id, inst_id,
+            img_px=(img_w, img_h),
+            placement=placement,
+            vert_offset=vert_offset_hwpunit,
+            horz_offset=horz_offset_hwpunit,
+            z_order=max_z_order(section) + 1 if placement == "overlay" else 0,
+        )
         section_new = section[:insert_pos] + pic_xml + section[insert_pos:]
 
         manifest_item = (
@@ -289,6 +448,23 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--width-mm", type=float, default=25.0, help="Displayed signature width in millimeters.")
     parser.add_argument("--width-hwpunit", type=int, help="Displayed signature width in HWPUNIT. Overrides --width-mm.")
     parser.add_argument("--overwrite", action="store_true", help="Overwrite --output if it already exists.")
+    parser.add_argument(
+        "--overlay", action="store_true",
+        help="Float the signature above the text instead of inserting it as a character. "
+             "Keeps the line height unchanged, so single-page fixed forms do not overflow.",
+    )
+    parser.add_argument(
+        "--fit-line", type=float, nargs="?", const=1.0, metavar="FACTOR",
+        help="Scale the signature so its height is FACTOR x the anchored line height (default 1.0).",
+    )
+    parser.add_argument(
+        "--anchor-para", metavar="TEXT",
+        help="Overlay only: anchor the picture to the paragraph containing TEXT and position it "
+             "by absolute offsets, leaving every run untouched. Use the first line of the "
+             "signature block (e.g. '소    속 :'). Requires --horz-offset-mm.",
+    )
+    parser.add_argument("--vert-offset-mm", type=float, help="Overlay only: vertical offset from the anchor paragraph top, in mm. Positive is downward.")
+    parser.add_argument("--horz-offset-mm", type=float, help="Overlay only: horizontal position from the column (cell) left edge, in mm.")
     return parser.parse_args(argv)
 
 
@@ -313,7 +489,15 @@ def main(argv: list[str] | None = None) -> int:
         occurrence=args.occurrence,
         width_hwpunit=width_hwpunit,
         overwrite=args.overwrite,
+        placement="overlay" if args.overlay else "inline",
+        vert_offset_hwpunit=(round(args.vert_offset_mm * HWPUNIT_PER_MM)
+                             if args.vert_offset_mm is not None else None),
+        horz_offset_hwpunit=(round(args.horz_offset_mm * HWPUNIT_PER_MM)
+                             if args.horz_offset_mm is not None else None),
+        fit_line=args.fit_line,
+        anchor_para=args.anchor_para,
     )
+    print(f"placement={'overlay' if args.overlay else 'inline'}")
     print(f"output={result}")
     print(f"anchor={anchor}")
     print(f"binary_id={binary_id}")

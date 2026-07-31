@@ -121,29 +121,37 @@ $code | & $py -c "import sys; exec(sys.stdin.read().lstrip(chr(0xfeff)))"
 삽입 전에 대상 문서·서명 자산·용도를 제시해 승인받는다. 원본 서명 이미지는 수정하지 않는다.
 
 1. 원본 `.hwp`는 한글 COM `Open` + `SaveAs(..., "HWPX")`로 먼저 임시 HWPX 작업본을 만든다.
-2. 텍스트와 서명 위치는 `clone_form.py --analyze`와 `Contents/section0.xml`의 실제 문단/run을 함께 확인한다.
-3. 날짜, 생년월일, 성명 같은 단순 값은 해당 `<hp:t>` 또는 문단 단위로 치환한다.
-4. 서명 이미지는 우선 `scripts/insert_signature_hwpx.py`로 넣는다. PowerShell에서 긴 XML 문자열을 `python -c`로 조립하지 않는다. 따옴표가 제거되어 XML이 깨지기 쉽다.
-5. 기본 호출 예:
+2. 날짜, 생년월일, 성명 같은 텍스트 값을 **먼저** 채운다 (`fill_cells.py` 또는 `<hp:t>` 치환). 서명 위치는 채워진 글자를 기준으로 잡으므로 순서가 뒤바뀌면 안 된다.
+3. 그림 배치는 **`scripts/place_signature.py`가 정본이다.** 좌표를 손으로 계산하지 않는다.
 
 ```powershell
-$env:PYTHONIOENCODING='utf-8'
-& $py "$SKILL_DIR\scripts\insert_signature_hwpx.py" "원본.hwpx" "서명.png" --name "홍길동"
+# 먼저 양식을 mm로 본다
+& $py "$SKILL_DIR\scripts\place_signature.py" "작업본.hwpx" "서명.png" `
+    --report --find "홍길동" --find "(서명)"
+
+# 기준 글자로 배치한다
+& $py "$SKILL_DIR\scripts\place_signature.py" "작업본.hwpx" "서명.png" `
+    --output "원본_완성본.hwpx" `
+    --anchor-para "4. 위 사항을 준수하겠습니다" --after-text "홍길동" --width-mm 24
 ```
 
-6. `--name`으로 `성명 : 이름` 문단을 찾지 못하면 `--anchor "생년월일 : 1990.01.01          성명 : 홍길동"`처럼 실제 하단 문단의 고유 텍스트를 넘긴다. 동의서 안에는 표 헤더의 `성명`도 있으므로 기본 검색은 마지막 일치 문단을 사용한다.
-7. 표시 크기는 기본 25mm 폭이다. 양식의 성명 줄이 좁으면 `--width-mm 20`, 넓으면 `--width-mm 30`처럼 조정한다.
-8. 스크립트는 ZIP에 `BinData/signature.png`를 추가하고, `Contents/content.hpf`의 `<opf:manifest>`에 이미지 항목을 등록하며, 서명 자리에는 완전한 `<hp:pic>` 구조와 뒤따르는 `<hp:t/>`를 넣는다.
-9. 최종본은 한글 COM으로 `Open` + `SaveAs(..., "HWPX")` 재저장하지 않는다. `validate.py`, `Contents/section0.xml`, `Contents/content.hpf`, 주요 값 포함 여부로 검증한다.
+- `--after-text`: 서명이 그 글자가 끝나는 지점에서 시작해 그 줄에 세로 중앙 정렬된다.
+- 바로 아래에 **다른 사람의 도장·서명란**이 있으면 자동으로 그 위까지만 내린다. 남의 표시를 덮지 않는 것이 우선이다.
+- `--anchor-para`는 목표보다 **위에 있는** 문단이어야 한다.
+- 승인받은 배치를 재현할 때는 `--target-left-mm` / `--target-bottom-mm`으로 좌표를 고정한다.
+- 스크립트는 탐침 1회 → 임시 PDF 렌더 → 실측 → 역산 → 재생성 → 검증까지 하고 오차 0.05mm 안에 맞춘다. 임시 PDF는 자동 삭제된다.
 
-주의:
+4. 최종본은 한글 COM으로 `Open` + `SaveAs(..., "HWPX")` 재저장하지 않는다.
 
-- 서명 이미지는 원본 PNG의 투명 배경을 그대로 사용한다.
-- `Preview/PrvText.txt`는 최신 내용이 아닐 수 있다. 최종 검증은 `Contents/section0.xml`과 주요 값 직접 확인을 우선한다.
-- COM 재저장은 기본 금지이므로 `BinData/signature.png` 파일명을 정리하려고 다시 저장하지 않는다. 검증할 때 파일명보다 `content.hpf` 등록 여부, 이미지 개수, XML 참조를 확인한다.
+주의 (모두 실측으로 확인, 2026-07-31):
+
+- **`imgClip`은 원본 이미지 좌표계다** (픽셀 x 75, 96dpi). 여기에 표시 크기를 넣으면 원본에서 그만큼만 잘라내 확대해 그린다 — 212px 서명을 20mm로 넣으면 왼쪽 36%만 남아 첫 획만 보인다. `curSz`/`sz`가 표시 크기, `scaMatrix`가 둘의 비율이다.
+- **구조 검증은 이 오류를 못 잡는다.** 위 상태의 파일이 `validate.py`를 그대로 통과했다. 서명·도장은 반드시 렌더링해서 눈으로 확인한다.
+- **음수 `vertOffset`은 0으로 잘린다.** 그림은 앵커 문단 상단 위로 못 올라가고, 오류 없이 그 자리에 붙는다.
+- **중첩표에서 문단을 정규식으로 자르지 않는다.** `<hp:p\b.*?</hp:p>`는 표를 품은 문단에서 안쪽 문단의 닫는 태그에 먼저 걸린다.
+- 서명 이미지는 원본 PNG의 투명 배경을 그대로 쓴다. `(서명)` 표기를 덮어도 되지만 `textWrap`은 `BEHIND_TEXT`여야 글자가 위에 남는다.
 - 원본 `.hwp`에는 쓰지 말고, 변환본과 최종본을 별도 경로로 만든다.
 - 직접 ZIP을 다시 쓸 때 `mimetype` 엔트리는 `ZIP_STORED`로 유지한다.
-- `scripts/insert_signature_hwpx.py`를 고쳐야 할 때도 텍스트/XML 파일은 `encoding="utf-8"` 또는 명시적 `.decode("utf-8")`/`.encode("utf-8")`로 처리한다.
 
 ## 표 구조 분석
 
