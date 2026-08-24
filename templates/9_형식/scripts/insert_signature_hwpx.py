@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Internal HWPX image writer used by place_signature.py.
+"""Internal HWPX image writer used by place_image.py.
 
 Do not route ordinary HWP/HWPX work or direct user requests to this module.
-The public workflow is Kordoc for documents and place_signature.py for an
-approved signature or stamp.
+The public workflow is Kordoc for document content and place_image.py for an
+approved raster image. The filename is retained for compatibility.
 """
 
 from __future__ import annotations
@@ -79,7 +79,7 @@ def unique_output_path(source: Path) -> Path:
         n += 1
 
 
-def unique_manifest_id(content_hpf: str, base: str = "signature") -> str:
+def unique_manifest_id(content_hpf: str, base: str = "image") -> str:
     used = set(re.findall(r"\bid=(['\"])(.*?)\1", content_hpf))
     used_ids = {value for _, value in used}
     if base not in used_ids:
@@ -90,7 +90,7 @@ def unique_manifest_id(content_hpf: str, base: str = "signature") -> str:
     return f"{base}{n}"
 
 
-def unique_bindata_name(names: set[str], base: str = "signature", ext: str = ".png") -> str:
+def unique_bindata_name(names: set[str], base: str = "image", ext: str = ".png") -> str:
     candidate = f"BinData/{base}{ext}"
     if candidate not in names:
         return candidate
@@ -268,9 +268,9 @@ def validate_xml_members(hwpx_path: Path) -> None:
                 ElementTree.fromstring(zf.read(name))
 
 
-def insert_signature(
+def insert_image(
     source: Path,
-    signature: Path,
+    image: Path,
     output: Path,
     anchor: str,
     occurrence: str,
@@ -283,7 +283,7 @@ def insert_signature(
     anchor_para: str | None = None,
 ) -> tuple[Path, str, str, int, int]:
     source = source.resolve()
-    signature = signature.resolve()
+    image = image.resolve()
     output = output.resolve()
     if source == output:
         raise ValueError("Output path must be different from source path.")
@@ -292,10 +292,10 @@ def insert_signature(
     if output.exists() and not overwrite:
         raise FileExistsError(f"Output already exists. Use --overwrite or choose another path: {output}")
     if width_hwpunit <= 0:
-        raise ValueError("Signature width must be positive.")
+        raise ValueError("Image width must be positive.")
     output.parent.mkdir(parents=True, exist_ok=True)
 
-    img_w, img_h = image_size(signature)
+    img_w, img_h = image_size(image)
     height_hwpunit = round(width_hwpunit * img_h / img_w)
 
     with zipfile.ZipFile(source, "r") as zin:
@@ -304,8 +304,8 @@ def insert_signature(
         content_hpf = zin.read("Contents/content.hpf").decode("utf-8")
         header_xml = zin.read("Contents/header.xml").decode("utf-8")
 
-        binary_id = unique_manifest_id(content_hpf)
-        ext = signature.suffix.lower() or ".png"
+        binary_id = unique_manifest_id(content_hpf, "image")
+        ext = image.suffix.lower() or ".png"
         media = {
             ".png": "image/png",
             ".jpg": "image/jpeg",
@@ -313,8 +313,8 @@ def insert_signature(
             ".bmp": "image/bmp",
         }.get(ext)
         if not media:
-            raise ValueError(f"Unsupported signature image extension: {ext}")
-        bindata_name = unique_bindata_name(names, "signature", ext)
+            raise ValueError(f"Unsupported image extension: {ext}")
+        bindata_name = unique_bindata_name(names, "image", ext)
 
         if anchor_para:
             insert_pos, char_pr = find_para_anchor(section, anchor_para, occurrence)
@@ -393,7 +393,7 @@ def insert_signature(
 
                 img_info = zipfile.ZipInfo(bindata_name)
                 img_info.compress_type = zipfile.ZIP_DEFLATED
-                zout.writestr(img_info, signature.read_bytes())
+                zout.writestr(img_info, image.read_bytes())
 
             validate_xml_members(tmp)
             os.replace(tmp, output)
@@ -404,18 +404,49 @@ def insert_signature(
     return output, binary_id, bindata_name, width_hwpunit, height_hwpunit
 
 
+def insert_signature(
+    source: Path,
+    signature: Path,
+    output: Path,
+    anchor: str,
+    occurrence: str,
+    width_hwpunit: int,
+    overwrite: bool,
+    placement: str = "inline",
+    vert_offset_hwpunit: int | None = None,
+    horz_offset_hwpunit: int | None = None,
+    fit_line: float | None = None,
+    anchor_para: str | None = None,
+) -> tuple[Path, str, str, int, int]:
+    """Compatibility alias for older callers; use :func:`insert_image`."""
+    return insert_image(
+        source=source,
+        image=signature,
+        output=output,
+        anchor=anchor,
+        occurrence=occurrence,
+        width_hwpunit=width_hwpunit,
+        overwrite=overwrite,
+        placement=placement,
+        vert_offset_hwpunit=vert_offset_hwpunit,
+        horz_offset_hwpunit=horz_offset_hwpunit,
+        fit_line=fit_line,
+        anchor_para=anchor_para,
+    )
+
+
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Internal HWPX image writer. Normal workflow: place_signature.py"
+        description="Internal HWPX image writer. Normal workflow: place_image.py"
     )
     parser.add_argument("source", help="Source .hwpx file")
-    parser.add_argument("signature", help="Signature image file (.png/.jpg/.bmp)")
+    parser.add_argument("image", help="Image file (.png/.jpg/.jpeg/.bmp)")
     parser.add_argument("--output", help="Output .hwpx path. Defaults to source folder with _완성본 suffix.")
     parser.add_argument("--name", help="Name to anchor after, e.g. 홍길동 -> '성명 : 홍길동'")
     parser.add_argument("--anchor", help="Exact paragraph text anchor. Defaults to '성명 : <name>' or '성명 :'.")
     parser.add_argument("--occurrence", choices=("first", "last"), default="last", help="Which matching paragraph to use.")
-    parser.add_argument("--width-mm", type=float, default=25.0, help="Displayed signature width in millimeters.")
-    parser.add_argument("--width-hwpunit", type=int, help="Displayed signature width in HWPUNIT. Overrides --width-mm.")
+    parser.add_argument("--width-mm", type=float, default=25.0, help="Displayed image width in millimeters.")
+    parser.add_argument("--width-hwpunit", type=int, help="Displayed image width in HWPUNIT. Overrides --width-mm.")
     parser.add_argument("--overwrite", action="store_true", help="Overwrite --output if it already exists.")
     parser.add_argument("--overlay", action="store_true")
     parser.add_argument("--fit-line", type=float, nargs="?", const=1.0, metavar="FACTOR")
@@ -428,19 +459,19 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv or sys.argv[1:])
     source = Path(args.source)
-    signature = Path(args.signature)
+    image = Path(args.image)
     if not source.is_file():
         raise FileNotFoundError(source)
-    if not signature.is_file():
-        raise FileNotFoundError(signature)
+    if not image.is_file():
+        raise FileNotFoundError(image)
 
     anchor = args.anchor or (f"성명 : {args.name}" if args.name else "성명 :")
     output = Path(args.output) if args.output else unique_output_path(source)
     width_hwpunit = args.width_hwpunit or round(args.width_mm * HWPUNIT_PER_MM)
 
-    result, binary_id, bindata_name, width, height = insert_signature(
+    result, binary_id, bindata_name, width, height = insert_image(
         source=source,
-        signature=signature,
+        image=image,
         output=output,
         anchor=anchor,
         occurrence=args.occurrence,

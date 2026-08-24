@@ -33,3 +33,5 @@ desktop.ini
 !/templates/7_개인정보이미지/통장사본/.gitkeep
 /templates/7_개인정보이미지/증명사진/*
 !/templates/7_개인정보이미지/증명사진/.gitkeep
+/templates/7_개인정보이미지/기타이미지/*
+!/templates/7_개인정보이미지/기타이미지/.gitkeep
