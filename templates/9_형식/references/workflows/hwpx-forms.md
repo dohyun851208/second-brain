@@ -1,199 +1,106 @@
 # HWP/HWPX 양식 작성
 
-HWPX는 ZIP 내부 XML이다. 양식의 표, 이미지, 스타일을 최대한 유지하고 텍스트만 채운다.
+일반 HWP/HWPX 작업의 정본은 Kordoc이다. 직접 XML 편집, 한컴 COM 변환, pack/unpack, 다른 HWPX 생성기로 자동 우회하지 않는다.
+Kordoc이 안전하게 처리하지 못하면 원본을 그대로 두고 실패 이유와 필요한 다음 입력만 알린다. 지원되는 암호 문서는 `--password`로 열 수 있지만 암호를 응답·로그에 남기지 않는다.
 
-적용 범위: 이 절차는 **서식 채우기·구조 편집**(XML 수준 작업)용이다. 기존 문서의 단순 내용 수정은
-`kordoc patch`가 기본 경로다 — 원본 포맷 유지(`.hwp`→`.hwp`, `.hwpx`→`.hwpx`), 변환·COM 불필요
-(`라우팅.md`, `references/kordoc.md` 참조).
+## 1. 먼저 분석
 
-## 기본 흐름
+- 읽기·텍스트 구조 확인: `npx -y kordoc@^4 원본.hwp -o 원본.md`
+- HWPX 필드 확인: `npx -y kordoc@^4 fill 양식.hwpx --dry-run`
+- 쓰기 전에 양식 전체의 필수·선택 항목과 이미지 칸·별도 첨부·서명·날인란을 확인한다. 작업 중 뒤늦게 발견해도 같은 승인·배치 규칙을 적용한다.
+- 원본은 항상 보존하고 출력 경로를 별도로 지정한다.
 
-최종 산출물이 HWPX일 때의 기본 경로:
+## 2. 텍스트 수정·양식 채우기
 
-원본 `.hwp` -> 임시 `.hwpx` 변환 -> HWPX ZIP/XML 직접 편집 -> `validate.py` 구조 검증 -> 주요 입력값 확인 -> 최종 `*_완성본.hwpx` 저장 -> 임시 파일 삭제
-
-1. `.hwp` 원본은 한글 COM으로 임시 `.hwpx` 작업본을 1회 만든다. 원본이 이미 `.hwpx`이면 원본을 덮어쓰지 말고 복사본을 작업본으로 둔다.
-2. `scripts/clone_form.py --analyze 작업본.hwpx`로 문단, 표, 텍스트 조각을 확인한다.
-3. 단순 기존 텍스트 치환이면 `clone_form.py --map map.json`을 사용한다.
-4. 빈 표 셀을 채워야 하면 `Contents/section0.xml`의 표/셀 구조를 분석하고 XML을 직접 수정한다.
-5. 편집 결과는 최종 산출물로 `.hwpx`만 유지한다. 다시 `.hwp`로 저장하지 않는다.
-6. `scripts/validate.py` 구조 검증과 `Contents/section0.xml` 직접 확인으로 주요 값이 유지되는지 확인한다.
-7. 임시 변환본, 압축 해제 폴더, 임시 스크립트 산출물은 삭제한다.
-
-기본으로 하지 않을 것:
-
-- `_완성본.hwp` 생성
-- 완성된 HWPX를 한컴 COM으로 재저장
-- 검증용 HWPX 별도 생성
-- PDF/이미지 렌더링 검증
-
-## HWP를 임시 HWPX로 변환
-
-한글 COM 자동화 객체는 항상 사용 가능하다고 전제한다. 사용 가능 여부를 사용자에게 묻거나 사전 점검 코드를 돌리지 말고 바로 변환을 시작한다. 이는 최종 HWP를 만드는 과정이 아니라, 원본 HWP를 편집 가능한 HWPX로 꺼내는 1회 변환이다.
-
-1. 한글 COM 객체를 만들고 창을 숨긴다.
-2. `RegisterModule("FilePathCheckDLL", "FilePathCheckerModule")`를 먼저 호출한다.
-3. `SetMessageBoxMode(0x00020000)`로 대화상자 때문에 멈추는 상황을 줄인다.
-4. `Open(input, "", "forceopen:true")`로 원본 HWP를 연다.
-5. `SaveAs(temp_work.hwpx, "HWPX", "")`로 임시 HWPX 작업본을 저장한다.
-6. 저장된 임시 HWPX에 대해 `validate.py`, `clone_form.py --analyze`, 주요 텍스트 포함 여부를 확인한다.
-
-주의:
-
-- HWPX 변환은 최대 1회만 표준 경로로 시도한다.
-- 한글 COM은 이 준비 단계에만 사용한다. 최종 `*_완성본.hwpx`를 정리하려고 `Open` + `SaveAs(..., "HWPX")`를 다시 수행하지 않는다.
-- `scripts/convert_hwp.py`처럼 외부 레포나 추가 설치에 의존하는 변환기는 COM 표준 경로 실패 뒤 구조 분석 보조용으로만 고려한다.
-- COM 변환이 30초 이상 멈추면 한글 프로세스를 정리하고 같은 변환을 반복하지 않는다.
-- HWPX 변환이 성공했어도 원본과 결과의 표 개수, 핵심 표의 `rowCnt`/`colCnt` 또는 이에 대응하는 구조가 달라지면 원본 표 보존 실패로 보고 자동 fallback하지 않는다. 사용자 승인이나 별도 지시를 받은 뒤 비기본 복구 경로를 선택한다.
-
-## HWPX 변환 실패 시
-
-기본 경로에서는 HWPX 변환 실패 뒤 자동 우회를 하지 않는다. 실패 사실, 멈춘 단계, 원본 보존 위험을 사용자에게 짧게 알리고 다음 지시를 받는다.
-
-- 한글 COM `Open` 또는 `SaveAs(..., "HWPX")`가 30초 이상 멈추거나 보안/변환 문제로 실패하면 같은 시도를 반복하지 않는다.
-- HWPML2X 추출, `SetTextFile`, 임시/최종 HWP 저장은 기본으로 사용하지 않는다.
-- `md2hwpx.py`로 새 HWPX 표를 다시 그리는 방식도 사용하지 않는다. 사용자가 명시적으로 "새 양식으로 다시 만들어도 됨"이라고 한 경우를 제외하면 기존 표가 깨진 산출물이 된다.
-- 가능한 선택지는 사용자가 변환된 HWPX를 제공하기, 비기본 HWPML2X 복구 경로를 승인하기, 새 HWPX 양식 재작성을 승인하기 중 하나로 정리해 제안한다.
-
-## 텍스트 추출
-
-- 빠른 확인: `Preview/PrvText.txt`
-- 기본 확인: ZIP 안의 `Contents/section0.xml`을 열고 `<hp:t>` 텍스트, 표 셀 주소, 입력값 포함 여부를 직접 확인한다.
-- `scripts/text_extract.py`는 선택 검증이다. 이 스크립트는 `python-hwpx`가 없으면 실패할 수 있으므로 기본 경로에 넣지 않는다.
-- 이미 `python-hwpx`가 설치되어 있고 표 텍스트를 추가로 보고 싶을 때만 `& $py "scripts/text_extract.py" "결과.hwpx" --include-tables`를 사용한다.
-
-## PowerShell 임시 Python 실행
-
-PowerShell에서 여러 줄 Python 코드를 실행할 때는 Bash식 heredoc 또는 긴 `python -c "..."` 인자 전달을 피한다. BOM, 따옴표, 한글 경로 때문에 분석 단계가 실패하기 쉽다.
-
-임시 `.py`/`.json` 파일을 PowerShell 리다이렉트(`>`, `Out-File`, `Set-Content`)로 만들지 않는다. 파일 앞에 BOM이 붙어 첫 글자에서 파싱이 실패한다. 에이전트의 파일 쓰기 도구 또는 Python `encoding="utf-8"` 쓰기로 만든다.
-
-Codex 데스크톱에서는 먼저 `load_workspace_dependencies`로 번들 Python 경로를 확인하고 `$py`에 담아 실행한다. bare `python`을 기본 예시로 쓰지 않는다. HWP COM 변환 fast path에는 `pywin32`/`win32com`이 필요하고, XML 조작 도구에는 `lxml`이 필요할 수 있으므로 번들 Python 또는 해당 모듈이 있는 고정 Python을 사용한다.
-
-안정적인 실행 템플릿:
+### 기존 내용 수정
 
 ```powershell
-$OutputEncoding = [System.Text.Encoding]::UTF8
-[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-chcp 65001
-$env:PYTHONIOENCODING='utf-8'
-$py = "<load_workspace_dependencies로 확인한 python.exe 경로>"
-$code = @'
-import sys
-print("ok")
-'@
-$code | & $py -c "import sys; exec(sys.stdin.read().lstrip(chr(0xfeff)))"
+npx -y kordoc@^4 patch 원본.hwp 편집.md -o 원본_완성본.hwp
+npx -y kordoc@^4 patch 원본.hwpx 편집.md -o 원본_완성본.hwpx
 ```
 
-같은 분석 코드를 반복할 때는 임시 인자 조립을 계속 고치지 말고 스크립트 파일 또는 기존 `scripts/` 도구로 옮긴다.
+`patch`는 원본 포맷을 유지한다. 내장 재검증을 끄는 `--no-verify`는 사용하지 않는다.
+편집 md는 파싱본과 같은 LF 줄바꿈으로 저장한다(CRLF면 표 편집이 전부 skip된다). exit 0이면 전부 적용, exit 2면 stderr의 `SKIP` 목록에 미적용 편집이 있으니 지원되는 형태로 다시 반영하거나 사용자에게 알린다.
 
-## 빈 셀 채우기
-
-빈 run의 일반 패턴:
-
-```xml
-<hp:run charPrIDRef="N"/>
-```
-
-채운 패턴:
-
-```xml
-<hp:run charPrIDRef="N"><hp:t>텍스트</hp:t></hp:run>
-```
-
-주의:
-
-- 빈 문자열을 순차 replace로 skip하지 않는다. 같은 빈 run이 반복 매칭될 수 있으므로 위치 또는 셀 주소 기반으로 치환한다.
-- 이미 문단과 run이 있는 표 셀은 새 문단을 재작성하기보다 원본 `<hp:p>`와 `<hp:run>` 개수를 유지하며 기존 run 내부 텍스트만 바꾼다.
-- 한 문단에 run이 여러 개 있으면 첫 run에 새 텍스트를 넣고 나머지 run은 빈 run으로 정리한다. 그렇지 않으면 기존 텍스트가 뒤에 남아 중복될 수 있다.
-- 새 줄 수가 원본 문단 수보다 많으면 셀 폭 기준으로 내용을 더 짧게 압축하거나 마지막 문단에 합친다. 검증 통과를 위해 임의 문단, 빈 run, XML 주석을 덧붙이지 않는다.
-- 편집 전후 같은 셀의 `cellAddr`, `cellSpan`, `cellSz`, `cellMargin`, `subList` 속성, 문단 수, run 수가 유지되는지 비교한다. 값이 줄어들면 양식 보존 실패로 보고 다시 편집한다.
-- `INPUT=OUTPUT` 저장은 금지한다. 임시 파일을 만들고 마지막에 이동한다.
-- 한글 파일명/경로에서 이동 실패가 날 수 있으면 영문 임시 파일을 사용한 뒤 rename한다.
-- 단순 텍스트 삽입은 보통 `fix_namespaces.py` 후처리가 필요 없다.
-
-## 서명 이미지 삽입
-
-개인정보 동의서, 확인서, 신청서처럼 하단에 `성명 : ... (인 또는 서명)` 문구가 있는 양식은 다음 순서가 안정적이다.
-
-볼트 안의 서명을 사용할 때는 먼저 `7_개인정보이미지/자산목록.md`에서 후보를 고르고
-`7_개인정보이미지/_안내.md`의 승인 규칙을 확인한다. 사용자가 해당 문서에 서명을 넣으라고 명시하지 않았다면
-삽입 전에 대상 문서·서명 자산·용도를 제시해 승인받는다. 원본 서명 이미지는 수정하지 않는다.
-
-1. 원본 `.hwp`는 한글 COM `Open` + `SaveAs(..., "HWPX")`로 먼저 임시 HWPX 작업본을 만든다.
-2. 날짜, 생년월일, 성명 같은 텍스트 값을 **먼저** 채운다 (`fill_cells.py` 또는 `<hp:t>` 치환). 서명 위치는 채워진 글자를 기준으로 잡으므로 순서가 뒤바뀌면 안 된다.
-3. 그림 배치는 **`scripts/place_signature.py`가 정본이다.** 좌표를 손으로 계산하지 않는다.
+### HWPX 양식 채우기
 
 ```powershell
-# 먼저 양식을 mm로 본다
-& $py "$SKILL_DIR\scripts\place_signature.py" "작업본.hwpx" "서명.png" `
-    --report --find "홍길동" --find "(서명)"
-
-# 기준 글자로 배치한다
-& $py "$SKILL_DIR\scripts\place_signature.py" "작업본.hwpx" "서명.png" `
-    --output "원본_완성본.hwpx" `
-    --anchor-para "4. 위 사항을 준수하겠습니다" --after-text "홍길동" --width-mm 24
+npx -y kordoc@^4 fill 양식.hwpx --dry-run
+npx -y kordoc@^4 fill 양식.hwpx -j 값.json -o 양식_완성본.hwpx --require-unique
 ```
 
-- `--after-text`: 서명이 그 글자가 끝나는 지점에서 시작해 그 줄에 세로 중앙 정렬된다.
-- 바로 아래에 **다른 사람의 도장·서명란**이 있으면 자동으로 그 위까지만 내린다. 남의 표시를 덮지 않는 것이 우선이다.
-- `--anchor-para`는 목표보다 **위에 있는** 문단이어야 한다.
-- 승인받은 배치를 재현할 때는 `--target-left-mm` / `--target-bottom-mm`으로 좌표를 고정한다.
-- 스크립트는 탐침 1회 → 임시 PDF 렌더 → 실측 → 역산 → 재생성 → 검증까지 하고 오차 0.05mm 안에 맞춘다. 임시 PDF는 자동 삭제된다.
+- `fill`의 서식 보존 경로는 HWPX용이다. `.hwp` 양식에 직행시키지 않는다.
+- 같은 라벨이 여러 곳이면 `--require-unique` 또는 배열 값을 사용해 오입력을 막는다.
+- 주민번호·계좌 등 민감 값은 응답이나 로그에 다시 쓰지 않는다.
+- 승인 이미지 삽입이 아닌 **양식 채우기**에서 Kordoc으로 안전하게 처리할 수 없는 `.hwp`는 변환하지 말고 HWPX 제공이 필요하다고 알린다.
 
-4. 최종본은 한글 COM으로 `Open` + `SaveAs(..., "HWPX")` 재저장하지 않는다.
+### 새 문서
 
-주의 (모두 실측으로 확인, 2026-07-31):
+볼트에 승인된 양식이 없고 새 문서 생성이 필요한 경우에만 Kordoc `generate`를 사용한다.
 
-- **`imgClip`은 원본 이미지 좌표계다** (픽셀 x 75, 96dpi). 여기에 표시 크기를 넣으면 원본에서 그만큼만 잘라내 확대해 그린다 — 212px 서명을 20mm로 넣으면 왼쪽 36%만 남아 첫 획만 보인다. `curSz`/`sz`가 표시 크기, `scaMatrix`가 둘의 비율이다.
-- **구조 검증은 이 오류를 못 잡는다.** 위 상태의 파일이 `validate.py`를 그대로 통과했다. 서명·도장은 반드시 렌더링해서 눈으로 확인한다.
-- **음수 `vertOffset`은 0으로 잘린다.** 그림은 앵커 문단 상단 위로 못 올라가고, 오류 없이 그 자리에 붙는다.
-- **중첩표에서 문단을 정규식으로 자르지 않는다.** `<hp:p\b.*?</hp:p>`는 표를 품은 문단에서 안쪽 문단의 닫는 태그에 먼저 걸린다.
-- 서명 이미지는 원본 PNG의 투명 배경을 그대로 쓴다. `(서명)` 표기를 덮어도 되지만 `textWrap`은 `BEHIND_TEXT`여야 글자가 위에 남는다.
-- 원본 `.hwp`에는 쓰지 말고, 변환본과 최종본을 별도 경로로 만든다.
-- 직접 ZIP을 다시 쓸 때 `mimetype` 엔트리는 `ZIP_STORED`로 유지한다.
+```powershell
+npx -y kordoc@^4 lint 초안.md --munche
+npx -y kordoc@^4 generate 초안.md -o 결과.hwpx --preset 보고서
 
-## 표 구조 분석
+# 마크다운의 ![](photo.png)를 실제 이미지로 임베드할 때 (이미지 파일명은 영문·숫자)
+npx -y kordoc@^4 generate 초안.md -o 결과.hwpx --preset 보고서 --image-dir ".\images"
+```
 
-- 겹표 여부: `re.findall(r'<hp:tbl\b', xml)` 개수 확인
-- 각 셀의 주소: `<hp:cellAddr colAddr="C" rowAddr="R"/>`
-- 각 셀의 크기: `<hp:cellSz width="W" height="H"/>`
-- 각 셀의 텍스트: 해당 `<hp:tc>...</hp:tc>` 내부의 `<hp:t>`
+- `lint`는 md/txt 원고에만 사용한다. 보고서·계획서는 `--munche`를 붙이고, 기안문·통지·회의록은 문체 관행이 달라 기본 lint만 쓴다.
+- 새 문서의 마크다운 이미지는 `--image-dir`로 Kordoc이 직접 임베드한다. 이 경우 `9_형식/scripts/place_image.py`를 쓰지 않는다. 이미지 파일명은 영문·숫자로 두고, 생성 stderr의 "이미지 임베드: N개"가 md의 이미지 참조 수와 같은지 확인한다(한글 파일명은 조용히 건너뛴다).
+- 보고서·계획서는 제목 직후 인용문(`>`)에 보고 목적 한 문장을 쓴다(요약박스, 없으면 경고). 4.13부터 위계·글꼴은 실결재 실측값으로 고정되며 마크다운 형태와 무관하게 같은 단계로 정규화된다. 세부 옵션은 `9_형식/references/kordoc.md`의 generate 절.
 
-열 헤더와 데이터 열은 반드시 실제 셀 주소로 매핑한다. 예를 들어 `연수기간(차시)`처럼 두 항목이 한 열에 합쳐진 양식은 기간과 시간을 같은 셀에 압축해 써야 한다.
+## 3. 기존 문서의 승인 이미지 지정 위치 배치
 
-## 셀 폭에 맞춘 작성
+Kordoc `generate --image-dir`로 새 문서를 만드는 경우가 아니라, 서명·도장·신분증·통장사본·증명사진·일반 사진을 **기존 HWP/HWPX의 지정 위치**에 넣어야 할 때만 텍스트 작업을 끝낸 뒤 마지막에 배치한다. 개인정보 자산 사용 승인은 `7_개인정보이미지/_안내.md`를 따른다.
+특정 문서와 이미지를 사용자가 직접 지정했다면 그 범위는 승인된 것으로 본다. 실행 여부는 최초 요청 문구가 아니라 최종 제출 요건과 승인 상태로 결정한다. 필수 개인정보 이미지·서명·날인란을 발견했지만 승인이 없으면 사용할 자산과 용도를 한 번 확인하고, 승인 뒤 같은 작업을 계속한다. 선택·모호한 이미지란은 자동 삽입하지 않으며 필수란을 말없이 비운 채 완성본으로 보고하지 않는다. 별도 파일 첨부 요구는 문서 안 삽입으로 대체하지 않는다.
 
-- 폰트 크기: `Contents/header.xml`의 `<hh:charPr id="N" height="H">`, `H/100 = pt`
-- 유효 폭: `cellSz width - 좌우 margin`
-- 한글 1글자 폭은 대략 `pt * 0.9~1.0 * 100` HWPUNIT 수준으로 보고 여유 있게 줄당 글자 수를 잡는다.
-- 기본 원칙은 내용을 축약하지 않고 의미 단위로 강제 줄바꿈하는 것이다. 한 문단을 긴 한 줄로 넣지 말고 여러 문단 또는 여러 짧은 줄로 나눈다.
-- 좁은 열이 많은 단계형·목록형 표는 짧은 제목 1줄과 짧은 불릿 3~4개로 나눈다. 예시 문장도 `예)`, 상황, 요청을 2~4줄로 분리한다.
-- 행 높이가 낮은 1쪽 고정 양식은 페이지 수를 유지한다. 이때는 행 높이를 크게 늘리기보다 양식에 있는 작은 글자 스타일을 먼저 찾고, 셀 안에서 짧은 의미 줄로 나눈다.
-- 내용이 물리적으로 들어가지 않는 경우에는 임의로 삭제하지 말고, 중요도가 낮은 항목을 `확인 필요` 또는 별도 첨부/추가자료 대상으로 남길지 판단한다.
+정본은 `9_형식/scripts/place_image.py`다. 호환용 `9_형식/scripts/place_signature.py`, Kordoc `seal`, 내부 모듈 `9_형식/scripts/hwp_to_hwpx.py`·`9_형식/scripts/insert_signature_hwpx.py`를 새 작업에서 직접 호출하지 않는다.
 
-줄당 글자 수의 보수적 기준:
+필요 조건:
 
-| 셀 유효 폭 | 권장 줄 길이 | 작성 방식 |
-| --- | --- | --- |
-| 5,000~7,000 HWPUNIT | 한글 5~8자 | 명사구 중심, 2~3줄 |
-| 7,000~11,000 HWPUNIT | 한글 8~12자 | 짧은 불릿, 긴 기관명은 줄바꿈 |
-| 11,000~18,000 HWPUNIT | 한글 12~18자 | 제목 1줄 + 불릿 3~4개 |
-| 18,000~30,000 HWPUNIT | 한글 20~30자 | 문장 1개를 2~3줄로 분할 |
-| 30,000 HWPUNIT 이상 | 한글 35~55자 | 문단형 가능, 필요 시 작은 글자 스타일 사용 |
+- 입력: `.hwp` 또는 `.hwpx`, 이미지 `.png`·`.jpg`·`.jpeg`·`.bmp` (`.hwp`는 이 작업 안에서만 임시 HWPX로 한 번 변환)
+- 환경: Windows, 한컴, Python `pywin32`, PyMuPDF
+- 출력: 원본과 다른 `.hwpx` 경로. HWP 입력도 최종본은 `*_완성본.hwpx`
 
-## 검증
+```powershell
+# 위치 조사
+py -3 9_형식/scripts/place_image.py "신청서.hwpx" "통장사본.jpg" `
+  --report --find "통장사본" --find "(서명)"
 
-기본 검증은 구조와 주요 입력값 확인으로 끝낸다. 검증용 HWPX를 별도로 만들거나, 완성본을 한컴 COM으로 재저장하거나, PDF/이미지 렌더링을 수행하지 않는다.
+# 이름 끝에서 시작하도록 실측 배치
+py -3 9_형식/scripts/place_image.py "신청서.hwpx" "서명.png" `
+  --output "신청서_완성본.hwpx" `
+  --anchor-para "신청인은 위 내용에 동의합니다" `
+  --after-text "홍길동" --width-mm 24
 
-- `& $py "scripts/validate.py" "결과.hwpx"`
-- ZIP 안의 `Contents/section0.xml`에서 주요 입력값, 표 셀 주소, 병합, 문단/run 구조를 직접 확인한다.
-- 주요 값 count 확인
-- 원본 대비 표 개수, 셀 주소, 병합, 셀 크기, 여백, 문단 수, run 수를 비교한다. 남은 기존 텍스트나 중복 텍스트는 직접 확인한다.
-- `scripts/verify_hwpx.py`는 구조 차이가 의심될 때만 선택 검증으로 사용한다. `--result`가 필수 인자다:
-  `& $py "scripts/verify_hwpx.py" --source "원본.hwpx" --result "결과_완성본.hwpx"` (원본 비교 생략 시 `--source` 없이 `--result`만)
-- `scripts/text_extract.py`는 `python-hwpx`가 이미 있을 때만 선택 검증으로 사용한다.
-- 이전 양식의 고유 placeholder나 예시 문구가 남았는지 검색한다. 예: `(     분)`, `○○`, 원본 예시 문장.
-- 검증 경고를 없애려고 section 크기 보정용 XML 주석, 의미 없는 빈 run, 임의 문단을 추가하지 않는다. 그런 보정은 통과처럼 보이지만 제출본 품질을 낮춘다.
-- 사용자가 요청했거나 최종 제출본에서 글자 겹침·잘림 위험이 높다고 판단될 때만 시각 검증을 제안한다. 이 경우에도 먼저 사용자에게 말하고, HWPX를 열더라도 재저장하지 않는다.
-- 검증 뒤 임시 변환본, 임시 압축 해제 폴더, 분석용 임시 파일을 삭제한다.
+# 일반 이미지: 조사한 좌·상단에 비율을 유지해 배치
+py -3 9_형식/scripts/place_image.py "신청서.hwpx" "통장사본.jpg" `
+  --output "신청서_완성본.hwpx" `
+  --anchor-para "첨부 이미지" `
+  --target-left-mm 25 --target-top-mm 120 --width-mm 80
+
+# HWP 입력: 내부에서 임시 HWPX로 한 번 변환한 뒤 같은 실측 배치 실행
+py -3 9_형식/scripts/place_image.py "신청서.hwp" "증명사진.jpg" `
+  --output "신청서_완성본.hwpx" `
+  --anchor-para "사진" `
+  --target-left-mm 150 --target-top-mm 25 --width-mm 30
+```
+
+- `--anchor-para`는 목표 줄보다 위에 있는 고유 문단을 사용한다.
+- `--after-text`는 글자 옆 서명·도장에 사용한다. 일반 이미지는 `--report`와 렌더를 확인한 뒤 `--target-left-mm` + `--target-top-mm`(또는 `--target-bottom-mm`)으로 명시 배치한다.
+- `9_형식/scripts/hwp_to_hwpx.py`와 `9_형식/scripts/insert_signature_hwpx.py`는 내부 모듈이므로 직접 실행하지 않는다.
+- 스크립트는 이미지 원본 비율을 유지하고, 탐침 렌더 → 실측 → 역산 → 결과 렌더 검증과 페이지 경계 검사를 수행한다.
+- 여러 이미지는 검증된 앞 단계 HWPX를 다음 단계 입력으로 순차 처리하고 최종본을 만든 뒤 중간본을 정리한다.
+- 기존 출력은 기본적으로 덮어쓰지 않는다. 사용자가 교체를 명시한 경우에만 `--overwrite`를 쓴다.
+- HWP 원본은 절대 다시 저장하지 않고 임시 변환본도 정리한다. 최종 HWPX를 COM으로 다시 저장하지 않는다.
+- 변환·배치에 실패하거나 요구 환경이 없으면 원본과 기존 출력을 그대로 두고 알린다. 서명은 Kordoc `seal`로, 일반 이미지는 임의 도구로 우회하지 않는다.
+- 성공 뒤 `7_개인정보이미지/사용기록.md`에 날짜·자산 ID·산출물·용도만 기록한다.
+
+## 4. 검증
+
+- 일반 HWP/HWPX: `npx -y kordoc@^4 validate 결과.hwpx`와 핵심 값 확인. 새 공문 원고는 생성 전 lint 경고도 확인.
+- 조판을 눈으로 확인해야 하면 `npx -y kordoc@^4 render 결과.hwpx --format png -d 쪽/`으로 쪽별 PNG를 본다 (`.hwp`도 가능).
+- 승인 이미지: `9_형식/scripts/place_image.py`의 XML 구조 검사와 한컴 렌더 실측 결과를 확인.
+- 원본 대비 페이지·표·핵심 문구가 바뀌지 않았는지 확인한다.
+- 임시 렌더와 작업 파일은 정리하고 최종 산출물만 남긴다.

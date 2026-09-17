@@ -1,6 +1,6 @@
 # 회의록 내용 규칙
 
-회의록, 협의록, 협의 결과 보고는 `references/workflows/hwpx-forms.md` 같은 형식 workflow를 먼저 따른 뒤, 이 문서의 내용 규칙을 적용한다.
+회의록, 협의록, 협의 결과 보고는 `9_형식/references/workflows/hwpx-forms.md` 같은 형식 workflow를 먼저 따른 뒤, 이 문서의 내용 규칙을 적용한다.
 
 ## 기본 구조
 

@@ -1,70 +1,63 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Place a signature image at an exact position on an HWPX form.
+"""Place an approved raster image precisely on an HWP/HWPX form.
 
-`insert_signature_hwpx.py` writes the picture, but its offsets are relative to
-an anchor whose origin cannot be derived reliably from the XML: COLUMN may mean
-the page text column or a table cell, PARA depends on which paragraph the run
-really sits in, and nested tables defeat regex paragraph matching. Guessing the
-origin puts the signature in the wrong place, and nothing in the file reveals
-the error.
+This is the implementation behind the generic ``place_image.py`` entry point.
+The historical ``place_signature.py`` command remains usable for compatibility.
 
-So this script measures instead. It inserts the picture once at a probe offset,
-exports a throwaway PDF through 한컴 COM, reads where the picture actually
-landed, solves for the offset that hits the requested position, rebuilds, and
-verifies. Two renders, and the result is accurate to a few hundredths of a mm.
+Legacy HWP input is converted exactly once to a temporary HWPX through Hancom
+COM, then follows the same measured HWPX placement path. The final output is
+always HWPX; the source HWP is never changed or re-saved.
 
-The same render also locates form text, so a target can be expressed as "start
-where the typed name ends, sitting on that line" instead of a raw coordinate.
+The HWPX picture offsets used by Hancom depend on layout origins that cannot be
+reliably inferred from XML alone. This script measures the actual render:
 
-Requires pywin32 (한컴 COM) and PyMuPDF.
+1. render the untouched source as a baseline,
+2. insert a probe image at a known offset and render it,
+3. solve the real layout origin,
+4. build and render a candidate,
+5. publish the candidate only when the measured error is within tolerance.
 
-Examples:
-    # look at the form first: where is everything, in mm?
-    place_signature.py 신청서.hwpx 서명.png --report --find 홍길동 --find "(서명)"
+The source and any existing output remain untouched on failure. Temporary HWPX
+and PDF files are removed. The internal XML writer is
+insert_signature_hwpx.py; do not call it directly in the normal workflow.
 
-    # place it: right after the typed name, on that line, clear of what is below
-    place_signature.py 신청서.hwpx 서명.png --output 신청서_완성본.hwpx \\
-        --anchor-para "4. 위 사항을 준수하겠습니다" --after-text 홍길동 --width-mm 24
-
-    # or give the page coordinates directly
-    place_signature.py 신청서.hwpx 서명.png --output 신청서_완성본.hwpx \\
-        --anchor-para "소    속 :" --target-left-mm 66.1 --target-bottom-mm 182.6
+Requires Windows Hancom Office, pywin32, and PyMuPDF.
 """
 
 from __future__ import annotations
 
 import argparse
+import math
 import os
+import shutil
 import sys
 import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from insert_signature_hwpx import image_size, insert_signature, unique_output_path  # noqa: E402
+from hwp_to_hwpx import HwpConversionError, convert_hwp_to_hwpx  # noqa: E402
+from insert_signature_hwpx import image_size, insert_image, unique_output_path  # noqa: E402
 
 MM_PER_PT = 25.4 / 72
 PROBE_HORZ_MM = 100.0
 PROBE_VERT_MM = 5.0
+PROBE_MAX_DIM_MM = 24.0
 
-
-# --------------------------------------------------------------------------
-# rendering
-# --------------------------------------------------------------------------
 
 def export_pdf(hwpx: Path, pdf: Path) -> None:
-    """Export via 한컴 COM. Read-only for the HWPX: it is opened, never saved."""
+    """Export through Hancom COM without saving the source HWPX."""
     try:
         import win32com.client as win32
-    except ImportError:  # pragma: no cover
-        raise SystemExit("pywin32가 필요합니다: python -m pip install pywin32")
+    except ImportError as exc:  # pragma: no cover - environment dependent
+        raise SystemExit("pywin32가 필요합니다: py -3 -m pip install pywin32") from exc
 
     hwp = win32.Dispatch("HWPFrame.HwpObject")
     try:
         try:
             hwp.RegisterModule("FilePathCheckDLL", "FilePathCheckerModule")
         except Exception:
-            print("WARN: 보안모듈 등록 실패 — scripts/setup_env.py를 먼저 실행하세요.")
+            print("WARN: 한컴 파일 경로 보안 모듈을 등록하지 못했습니다.")
         hwp.SetMessageBoxMode(0x00020000)
         try:
             hwp.XHwpWindows.Item(0).Visible = False
@@ -80,260 +73,462 @@ def export_pdf(hwpx: Path, pdf: Path) -> None:
             hwp.Quit()
         except Exception:
             pass
+
     if not pdf.exists() or pdf.stat().st_size == 0:
-        raise SystemExit(f"PDF 내보내기 실패: {pdf}")
+        raise SystemExit(f"한컴 PDF 렌더링 실패: {pdf}")
 
 
 def read_page(pdf: Path, page_no: int = 0):
-    """Return (images, words, page rect) with every coordinate in millimetres."""
+    """Return images, words, and page size with coordinates in millimetres."""
     try:
         import fitz
-    except ImportError:  # pragma: no cover
-        raise SystemExit("PyMuPDF가 필요합니다: python -m pip install pymupdf")
+    except ImportError as exc:  # pragma: no cover - environment dependent
+        raise SystemExit("PyMuPDF가 필요합니다: py -3 -m pip install pymupdf") from exc
 
     doc = fitz.open(pdf)
-    page = doc[page_no]
-    images = [
-        {
-            "px": (info["width"], info["height"]),
-            "bbox": tuple(v * MM_PER_PT for v in info["bbox"]),
-        }
-        for info in page.get_image_info(xrefs=True)
-    ]
-    words = [
-        {"text": w[4], "bbox": tuple(v * MM_PER_PT for v in w[:4])}
-        for w in page.get_text("words")
-    ]
-    rect = (page.rect.width * MM_PER_PT, page.rect.height * MM_PER_PT)
-    doc.close()
-    return images, words, rect
+    try:
+        if page_no < 0 or page_no >= len(doc):
+            raise SystemExit(f"쪽 번호 범위 오류: {page_no} (전체 {len(doc)}쪽)")
+        page = doc[page_no]
+        images = [
+            {
+                "px": (info["width"], info["height"]),
+                "bbox": tuple(v * MM_PER_PT for v in info["bbox"]),
+            }
+            for info in page.get_image_info(xrefs=True)
+        ]
+        words = [
+            {"text": w[4], "bbox": tuple(v * MM_PER_PT for v in w[:4])}
+            for w in page.get_text("words")
+        ]
+        rect = (page.rect.width * MM_PER_PT, page.rect.height * MM_PER_PT)
+        return images, words, rect
+    finally:
+        doc.close()
 
 
 def find_phrase(pdf: Path, needle: str, occurrence: str, page_no: int = 0):
-    """Locate `needle` on the page. Returns its bbox in millimetres."""
-    import fitz
+    """Locate text on a rendered page and return its bbox in millimetres."""
+    try:
+        import fitz
+    except ImportError as exc:  # pragma: no cover
+        raise SystemExit("PyMuPDF가 필요합니다: py -3 -m pip install pymupdf") from exc
 
     doc = fitz.open(pdf)
-    hits = doc[page_no].search_for(needle)
-    doc.close()
+    try:
+        if page_no < 0 or page_no >= len(doc):
+            raise SystemExit(f"쪽 번호 범위 오류: {page_no} (전체 {len(doc)}쪽)")
+        hits = doc[page_no].search_for(needle)
+    finally:
+        doc.close()
     if not hits:
         raise SystemExit(f"본문에서 찾지 못했습니다: {needle!r}")
     hit = hits[0] if occurrence == "first" else hits[-1]
     return tuple(v * MM_PER_PT for v in hit)
 
 
-def pick_signature(images, want_width_mm: float, aspect: float):
-    """Find the inserted picture among the form's own images.
+def _same_rendered_image(left: dict, right: dict, tolerance_mm: float = 0.15) -> bool:
+    if left["px"] != right["px"]:
+        return False
+    return max(abs(a - b) for a, b in zip(left["bbox"], right["bbox"])) <= tolerance_mm
 
-    Matched on rendered size rather than pixel dimensions: the rasteriser may
-    report a pixel height one off from the source file, but the drawn width is
-    exactly what was asked for.
-    """
-    best, best_err = None, None
-    for im in images:
-        x0, y0, x1, y1 = im["bbox"]
-        w, h = x1 - x0, y1 - y0
-        if h <= 0:
+
+def pick_inserted_image(
+    images: list[dict],
+    baseline_images: list[dict],
+    want_width_mm: float,
+    aspect: float,
+    source_px: tuple[int, int],
+):
+    """Identify the newly inserted image without confusing it with form images."""
+    candidates = []
+    for image in images:
+        x0, y0, x1, y1 = image["bbox"]
+        width, height = x1 - x0, y1 - y0
+        if height <= 0:
             continue
-        err = abs(w - want_width_mm)
-        if err > 0.6 or abs((w / h) - aspect) > 0.03 * aspect:
+        width_error = abs(width - want_width_mm)
+        aspect_error = abs((width / height) - aspect)
+        pixel_error = abs(image["px"][0] - source_px[0]) + abs(image["px"][1] - source_px[1])
+        if width_error > 0.6 or aspect_error > 0.03 * aspect or pixel_error > 4:
             continue
-        if best_err is None or err < best_err:
-            best, best_err = im, err
-    if best is None:
+        is_baseline = any(_same_rendered_image(image, old) for old in baseline_images)
+        score = width_error + aspect_error + pixel_error / 1000
+        candidates.append((is_baseline, score, image))
+
+    added = [item for item in candidates if not item[0]]
+    pool = added or candidates
+    if not pool:
         raise SystemExit(
-            f"렌더링된 쪽에서 삽입한 서명을 식별하지 못했습니다 "
-            f"(폭 {want_width_mm}mm, 비율 {aspect:.2f} 기준)."
+            f"렌더링된 쪽에서 삽입 이미지를 식별하지 못했습니다 "
+            f"(폭 {want_width_mm}mm, 비율 {aspect:.2f}, 원본 {source_px[0]}x{source_px[1]}px)."
         )
-    return best["bbox"]
+    pool.sort(key=lambda item: item[1])
+    if len(pool) > 1 and abs(pool[0][1] - pool[1][1]) < 1e-6:
+        raise SystemExit("같은 크기와 비율의 삽입 이미지가 여러 개라 대상을 안전하게 구분하지 못했습니다.")
+    return pool[0][2]["bbox"]
 
 
-# --------------------------------------------------------------------------
-# target
-# --------------------------------------------------------------------------
-
-def derive_target(line_bbox, images, words, sig_bbox, width_mm, height_mm, gap_mm):
-    """Work out where the signature should sit, from the form's own layout.
-
-    Mirrors how the signature is placed by hand: it starts where the typed name
-    ends and is centred on that line. When something sits directly underneath —
-    another signer's line, an existing seal — it is lifted just clear of it
-    instead, because a signature must never cover another person's mark.
-    """
-    lx0, ly0, lx1, ly1 = line_bbox
-    left = lx1
+def derive_target(line_bbox, images, words, inserted_bbox, width_mm, height_mm, gap_mm):
+    """Start at the typed text end, centre on its line, and avoid marks below."""
+    _, line_top, line_right, line_bottom = line_bbox
+    left = line_right
     right = left + width_mm
-    centred_bottom = (ly0 + ly1) / 2 + height_mm / 2
+    centred_bottom = (line_top + line_bottom) / 2 + height_mm / 2
 
     def overlaps(bbox):
         return not (bbox[2] <= left + 0.2 or bbox[0] >= right - 0.2)
 
     obstacles = []
-    for im in images:
-        if im["bbox"] == sig_bbox:
+    for image in images:
+        if image["bbox"] == inserted_bbox:
             continue
-        if im["bbox"][1] >= ly1 - 0.2 and overlaps(im["bbox"]):
-            obstacles.append((im["bbox"][1], f"그림 {im['px'][0]}x{im['px'][1]}px"))
-    for wd in words:
-        if wd["bbox"][1] >= ly1 - 0.2 and overlaps(wd["bbox"]):
-            obstacles.append((wd["bbox"][1], f"글자 {wd['text']!r}"))
+        if image["bbox"][1] >= line_bottom - 0.2 and overlaps(image["bbox"]):
+            obstacles.append((image["bbox"][1], f"그림 {image['px'][0]}x{image['px'][1]}px"))
+    for word in words:
+        if word["bbox"][1] >= line_bottom - 0.2 and overlaps(word["bbox"]):
+            obstacles.append((word["bbox"][1], f"글자 {word['text']!r}"))
 
     if obstacles:
-        top_of_nearest, what = min(obstacles, key=lambda o: o[0])
-        limited_bottom = top_of_nearest - gap_mm
+        nearest_top, description = min(obstacles, key=lambda item: item[0])
+        limited_bottom = nearest_top - gap_mm
         if limited_bottom < centred_bottom:
-            return left, limited_bottom, f"아래 {what} 회피 (상단 {top_of_nearest:.1f}mm)"
-    return left, centred_bottom, "이름 줄에 세로 중앙 정렬"
+            return left, limited_bottom, f"아래 {description} 회피 (상단 {nearest_top:.1f}mm)"
+    return left, centred_bottom, "기준 글자 줄에 세로 중앙 정렬"
 
-
-# --------------------------------------------------------------------------
-# main
-# --------------------------------------------------------------------------
 
 def parse_args(argv):
-    p = argparse.ArgumentParser(
-        description="Place a signature on an HWPX form by measuring the rendered page.")
-    p.add_argument("source", help="Source .hwpx (text already filled in)")
-    p.add_argument("signature", help="Signature image (.png/.jpg/.bmp)")
-    p.add_argument("--output", help="Output .hwpx. Defaults to <source>_완성본.hwpx")
-    p.add_argument("--report", action="store_true",
-                   help="Only measure the form and print its geometry in mm.")
-    p.add_argument("--find", action="append", default=[], metavar="TEXT",
-                   help="Report mode: also locate this text. Repeatable.")
-    p.add_argument("--anchor-para", metavar="TEXT",
-                   help="Paragraph to anchor to. Must sit ABOVE the target: a picture "
-                        "cannot be offset above its anchor paragraph.")
-    p.add_argument("--width-mm", type=float, default=24.0, help="Displayed width (default 24).")
-    p.add_argument("--after-text", metavar="TEXT",
-                   help="Target starts where this text ends, on that text's line.")
-    p.add_argument("--target-left-mm", type=float, help="Explicit target left edge, from page left.")
-    p.add_argument("--target-bottom-mm", type=float, help="Explicit target bottom, from page top.")
-    p.add_argument("--gap-mm", type=float, default=0.4,
-                   help="Clearance kept above whatever sits below (default 0.4).")
-    p.add_argument("--occurrence", choices=("first", "last"), default="last",
-                   help="Which occurrence of --after-text / --anchor-para to use.")
-    p.add_argument("--tolerance-mm", type=float, default=0.3,
-                   help="Accepted placement error (default 0.3).")
-    p.add_argument("--page", type=int, default=0, help="0-based page index (default 0).")
-    p.add_argument("--overwrite", action="store_true", help="Overwrite --output if present.")
-    return p.parse_args(argv)
+    parser = argparse.ArgumentParser(
+        description="Render-measure-place-verify an approved image on HWP/HWPX."
+    )
+    parser.add_argument("source", help="Source .hwp or .hwpx with text already filled")
+    parser.add_argument("image", help="Approved image (.png/.jpg/.jpeg/.bmp)")
+    parser.add_argument("--output", help="Output .hwpx; default is <source>_완성본.hwpx")
+    parser.add_argument("--report", action="store_true", help="Measure only; do not create output")
+    parser.add_argument("--find", action="append", default=[], metavar="TEXT")
+    parser.add_argument(
+        "--anchor-para",
+        metavar="TEXT",
+        help="Unique paragraph above the target; a picture cannot move above its anchor",
+    )
+    parser.add_argument("--width-mm", type=float, default=24.0)
+    parser.add_argument("--after-text", metavar="TEXT", help="Start where this rendered text ends")
+    parser.add_argument("--target-left-mm", type=float)
+    parser.add_argument("--target-top-mm", type=float)
+    parser.add_argument("--target-bottom-mm", type=float)
+    parser.add_argument("--gap-mm", type=float, default=0.4)
+    parser.add_argument("--occurrence", choices=("first", "last"), default="last")
+    parser.add_argument("--tolerance-mm", type=float, default=0.3)
+    parser.add_argument("--page", type=int, default=0, help="0-based page index")
+    parser.add_argument(
+        "--page-relative",
+        action="store_true",
+        help="Pin to the sheet, not the anchor paragraph, so a tall image cannot "
+        "grow a fixed-height form box and push the layout onto a new page",
+    )
+    parser.add_argument("--overwrite", action="store_true")
+    return parser.parse_args(argv)
+
+
+def _cleanup_temp_dir(path: Path) -> None:
+    for child in path.iterdir():
+        try:
+            if child.is_file():
+                child.unlink()
+        except OSError:
+            pass
+    try:
+        path.rmdir()
+    except OSError:
+        pass
+
+
+def _prepare_hwpx_source(source: Path, temp_dir: Path) -> Path:
+    """Return HWPX input, converting legacy HWP once inside the temp folder."""
+    if source.suffix.lower() == ".hwpx":
+        return source
+
+    converted = temp_dir / f"{source.stem}.converted.hwpx"
+    print(f"HWP → 임시 HWPX 변환: {source.name}")
+    try:
+        return convert_hwp_to_hwpx(source, converted)
+    except (FileNotFoundError, FileExistsError, ValueError, HwpConversionError) as exc:
+        raise SystemExit(f"HWP→HWPX 변환 실패: {exc}\n원본은 변경하지 않았습니다.") from exc
 
 
 def main(argv=None):
     args = parse_args(argv or sys.argv[1:])
-    source, signature = Path(args.source), Path(args.signature)
-    for f in (source, signature):
-        if not f.is_file():
-            raise SystemExit(f"파일 없음: {f}")
+    source = Path(args.source).expanduser().resolve()
+    image = Path(args.image).expanduser().resolve()
 
-    px_w, px_h = image_size(signature)
-    aspect = px_w / px_h
+    if not source.is_file():
+        raise SystemExit(f"원본 파일 없음: {source}")
+    if source.suffix.lower() not in {".hwp", ".hwpx"}:
+        raise SystemExit("이미지 실측 배치는 .hwp 또는 .hwpx만 지원합니다. 원본은 변경하지 않았습니다.")
+    if not image.is_file():
+        raise SystemExit(f"이미지 파일 없음: {image}")
+    numeric_values = [args.width_mm, args.gap_mm, args.tolerance_mm]
+    numeric_values.extend(
+        value
+        for value in (
+            args.target_left_mm,
+            args.target_top_mm,
+            args.target_bottom_mm,
+        )
+        if value is not None
+    )
+    if not all(math.isfinite(value) for value in numeric_values):
+        raise SystemExit("크기·좌표·간격·허용 오차는 유한한 숫자여야 합니다.")
+    if args.width_mm <= 0 or args.gap_mm < 0 or args.tolerance_mm < 0:
+        raise SystemExit("폭은 0보다 커야 하고 간격·허용 오차는 음수일 수 없습니다.")
+    if args.page < 0:
+        raise SystemExit("--page는 0 이상이어야 합니다.")
+
+    pixel_width, pixel_height = image_size(image)
+    aspect = pixel_width / pixel_height
     height_mm = args.width_mm / aspect
 
-    tmp = Path(tempfile.mkdtemp(prefix="place_sig_"))
-    try:
-        # ---------- report ----------
-        if args.report:
-            pdf = tmp / "report.pdf"
-            export_pdf(source, pdf)
-            images, words, rect = read_page(pdf, args.page)
-            print(f"쪽 크기: {rect[0]:.1f} x {rect[1]:.1f} mm   (좌표는 쪽 좌상단 기준)\n")
+    if args.report:
+        temp_dir = Path(tempfile.mkdtemp(prefix="place_img_report_"))
+        try:
+            working_source = _prepare_hwpx_source(source, temp_dir)
+            source_pdf = temp_dir / "source.pdf"
+            export_pdf(working_source, source_pdf)
+            images, _, page_rect = read_page(source_pdf, args.page)
+            print(
+                f"쪽 크기: {page_rect[0]:.1f} x {page_rect[1]:.1f} mm "
+                f"(좌표는 쪽 좌상단 기준)\n"
+            )
             print("그림:")
-            for im in images:
-                b = im["bbox"]
-                print(f"  {im['px'][0]}x{im['px'][1]}px   좌 {b[0]:6.1f}  상 {b[1]:6.1f}  "
-                      f"우 {b[2]:6.1f}  하 {b[3]:6.1f}")
             if not images:
                 print("  (없음)")
+            for image in images:
+                bbox = image["bbox"]
+                print(
+                    f"  {image['px'][0]}x{image['px'][1]}px "
+                    f"좌 {bbox[0]:6.1f} 상 {bbox[1]:6.1f} "
+                    f"우 {bbox[2]:6.1f} 하 {bbox[3]:6.1f}"
+                )
             for needle in args.find:
                 print(f"\n{needle!r}:")
-                import fitz
-                doc = fitz.open(pdf)
-                for h in doc[args.page].search_for(needle):
-                    b = [v * MM_PER_PT for v in h]
-                    print(f"  좌 {b[0]:6.1f}  상 {b[1]:6.1f}  우 {b[2]:6.1f}  하 {b[3]:6.1f}")
-                doc.close()
-            print(f"\n서명 {px_w}x{px_h}px를 폭 {args.width_mm}mm로 넣으면 "
-                  f"높이 {height_mm:.1f}mm입니다.")
+                try:
+                    import fitz
+                except ImportError as exc:  # pragma: no cover
+                    raise SystemExit("PyMuPDF가 필요합니다: py -3 -m pip install pymupdf") from exc
+                doc = fitz.open(source_pdf)
+                try:
+                    hits = doc[args.page].search_for(needle)
+                finally:
+                    doc.close()
+                if not hits:
+                    print("  (찾지 못함)")
+                for hit in hits:
+                    bbox = [value * MM_PER_PT for value in hit]
+                    print(
+                        f"  좌 {bbox[0]:6.1f} 상 {bbox[1]:6.1f} "
+                        f"우 {bbox[2]:6.1f} 하 {bbox[3]:6.1f}"
+                    )
+            print(
+                f"\n이미지 {pixel_width}x{pixel_height}px를 폭 {args.width_mm}mm로 넣으면 "
+                f"높이 {height_mm:.1f}mm입니다."
+            )
             return 0
+        finally:
+            _cleanup_temp_dir(temp_dir)
 
-        # ---------- placement ----------
-        if not args.anchor_para:
-            raise SystemExit("--anchor-para 가 필요합니다 (목표보다 위에 있는 문단의 텍스트).")
-        explicit = args.target_left_mm is not None and args.target_bottom_mm is not None
-        if not explicit and not args.after_text:
-            raise SystemExit("--after-text 또는 --target-left-mm/--target-bottom-mm 이 필요합니다.")
+    if not args.anchor_para:
+        raise SystemExit("--anchor-para가 필요합니다. 목표보다 위에 있는 고유 문단을 지정하세요.")
+    has_left = args.target_left_mm is not None
+    has_top = args.target_top_mm is not None
+    has_bottom = args.target_bottom_mm is not None
+    if has_top and has_bottom:
+        raise SystemExit("--target-top-mm와 --target-bottom-mm는 함께 지정할 수 없습니다.")
+    explicit_target = has_left and (has_top or has_bottom)
+    if has_left != (has_top or has_bottom):
+        raise SystemExit(
+            "--target-left-mm와 --target-top-mm 또는 --target-bottom-mm를 함께 지정해야 합니다."
+        )
+    if not explicit_target and not args.after_text:
+        raise SystemExit("--after-text 또는 좌·하단 목표 좌표가 필요합니다.")
 
-        output = Path(args.output) if args.output else unique_output_path(source)
+    output = (
+        Path(args.output).expanduser().resolve()
+        if args.output
+        else unique_output_path(source.with_suffix(".hwpx")).resolve()
+    )
+    if output.suffix.lower() != ".hwpx":
+        raise SystemExit("출력 파일 확장자는 .hwpx여야 합니다.")
+    if output == source:
+        raise SystemExit("출력 경로는 원본과 달라야 합니다.")
+    if output.exists() and not args.overwrite:
+        raise SystemExit(f"기존 출력은 덮어쓰지 않습니다: {output}")
+    output.parent.mkdir(parents=True, exist_ok=True)
 
-        def build(dst, horz, vert):
-            insert_signature(
-                source=source, signature=signature, output=dst,
-                anchor="", occurrence=args.occurrence,
-                width_hwpunit=round(args.width_mm * 7200 / 25.4), overwrite=True,
-                placement="overlay",
-                vert_offset_hwpunit=round(vert * 7200 / 25.4),
-                horz_offset_hwpunit=round(horz * 7200 / 25.4),
+    temp_dir = Path(tempfile.mkdtemp(prefix="place_img_"))
+    try:
+        working_source = _prepare_hwpx_source(source, temp_dir)
+        source_pdf = temp_dir / "source.pdf"
+        export_pdf(working_source, source_pdf)
+        baseline_images, _, page_rect = read_page(source_pdf, args.page)
+
+        def build(
+            destination: Path,
+            horizontal_mm: float,
+            vertical_mm: float,
+            display_width_mm: float,
+        ) -> None:
+            insert_image(
+                source=working_source,
+                image=image,
+                output=destination,
+                anchor="",
+                occurrence=args.occurrence,
+                width_hwpunit=round(display_width_mm * 7200 / 25.4),
+                overwrite=True,
+                placement="page" if args.page_relative else "overlay",
+                vert_offset_hwpunit=round(vertical_mm * 7200 / 25.4),
+                horz_offset_hwpunit=round(horizontal_mm * 7200 / 25.4),
                 anchor_para=args.anchor_para,
             )
 
-        # probe: one build at a known offset reveals both origins
-        probe = tmp / "probe.hwpx"
-        probe_pdf = tmp / "probe.pdf"
-        build(probe, PROBE_HORZ_MM, PROBE_VERT_MM)
+        probe = temp_dir / "probe.hwpx"
+        probe_pdf = temp_dir / "probe.pdf"
+        probe_width_mm = min(
+            args.width_mm,
+            PROBE_MAX_DIM_MM,
+            PROBE_MAX_DIM_MM * aspect,
+        )
+        build(probe, PROBE_HORZ_MM, PROBE_VERT_MM, probe_width_mm)
         export_pdf(probe, probe_pdf)
-        images, words, _ = read_page(probe_pdf, args.page)
-        sig_bbox = pick_signature(images, args.width_mm, aspect)
+        probe_images, words, _ = read_page(probe_pdf, args.page)
+        probe_bbox = pick_inserted_image(
+            probe_images,
+            baseline_images,
+            probe_width_mm,
+            aspect,
+            (pixel_width, pixel_height),
+        )
 
-        col_origin = sig_bbox[0] - PROBE_HORZ_MM
-        para_origin = sig_bbox[1] - PROBE_VERT_MM
-        print(f"탐침 offset({PROBE_HORZ_MM}, {PROBE_VERT_MM}) -> "
-              f"좌 {sig_bbox[0]:.1f} 상 {sig_bbox[1]:.1f} mm")
-        print(f"  원점: COLUMN {col_origin:.1f}mm, PARA {para_origin:.1f}mm")
+        column_origin = probe_bbox[0] - PROBE_HORZ_MM
+        paragraph_origin = probe_bbox[1] - PROBE_VERT_MM
+        print(
+            f"탐침 offset({PROBE_HORZ_MM}, {PROBE_VERT_MM}) -> "
+            f"좌 {probe_bbox[0]:.1f} 상 {probe_bbox[1]:.1f} mm"
+        )
+        print(f"  원점: COLUMN {column_origin:.1f}mm, PARA {paragraph_origin:.1f}mm")
 
-        if explicit:
-            left, bottom, why = args.target_left_mm, args.target_bottom_mm, "직접 지정"
+        if explicit_target:
+            left = args.target_left_mm
+            if has_top:
+                top = args.target_top_mm
+                bottom = top + height_mm
+                reason = "좌·상단 직접 지정"
+            else:
+                bottom = args.target_bottom_mm
+                top = bottom - height_mm
+                reason = "좌·하단 직접 지정"
         else:
-            line = find_phrase(probe_pdf, args.after_text, args.occurrence, args.page)
-            left, bottom, why = derive_target(
-                line, images, words, sig_bbox, args.width_mm, height_mm, args.gap_mm)
-            print(f"  기준 {args.after_text!r}: 좌 {line[0]:.1f} 상 {line[1]:.1f} "
-                  f"우 {line[2]:.1f} 하 {line[3]:.1f} mm")
-        top = bottom - height_mm
-        print(f"  목표: 좌 {left:.1f}mm, 상 {top:.1f}mm, 하 {bottom:.1f}mm  ({why})")
+            line_bbox = find_phrase(probe_pdf, args.after_text, args.occurrence, args.page)
+            left, bottom, reason = derive_target(
+                line_bbox,
+                probe_images,
+                words,
+                probe_bbox,
+                args.width_mm,
+                height_mm,
+                args.gap_mm,
+            )
+            print(
+                f"  기준 {args.after_text!r}: 좌 {line_bbox[0]:.1f} 상 {line_bbox[1]:.1f} "
+                f"우 {line_bbox[2]:.1f} 하 {line_bbox[3]:.1f} mm"
+            )
 
-        horz, vert = left - col_origin, top - para_origin
-        if vert < 0:
+            top = bottom - height_mm
+        right = left + args.width_mm
+        if left < 0 or top < 0 or right > page_rect[0] or bottom > page_rect[1]:
             raise SystemExit(
-                f"세로 오프셋이 음수({vert:.1f}mm)입니다. 그림은 앵커 문단 위로 올라가지 못하고 "
-                f"조용히 문단 상단에 붙습니다. --anchor-para 를 더 위쪽 문단으로 바꾸세요.")
+                "목표 이미지가 쪽 경계를 벗어납니다: "
+                f"좌 {left:.1f}, 상 {top:.1f}, 우 {right:.1f}, 하 {bottom:.1f}mm / "
+                f"쪽 {page_rect[0]:.1f} x {page_rect[1]:.1f}mm. 출력하지 않았습니다."
+            )
+        print(f"  목표: 좌 {left:.1f}mm, 상 {top:.1f}mm, 하 {bottom:.1f}mm ({reason})")
 
+        horizontal_mm = left - column_origin
+        vertical_mm = top - paragraph_origin
+        if horizontal_mm < 0:
+            raise SystemExit(
+                f"가로 오프셋이 음수({horizontal_mm:.1f}mm)입니다. "
+                "더 왼쪽 기준의 앵커를 고르세요."
+            )
+        if vertical_mm < 0:
+            raise SystemExit(
+                f"세로 오프셋이 음수({vertical_mm:.1f}mm)입니다. "
+                "--anchor-para를 더 위쪽 문단으로 바꾸세요."
+            )
+
+        verified_candidate = None
+        final_error = None
         for attempt in (1, 2):
-            build(output, horz, vert)
-            out_pdf = tmp / f"out{attempt}.pdf"
-            export_pdf(output, out_pdf)
-            got = pick_signature(read_page(out_pdf, args.page)[0], args.width_mm, aspect)
-            dx, dy = left - got[0], bottom - got[3]
-            print(f"  {attempt}차: 좌 {got[0]:.1f} 상 {got[1]:.1f} 우 {got[2]:.1f} 하 {got[3]:.1f} mm"
-                  f"   오차 좌 {-dx:+.2f} 하 {-dy:+.2f}")
-            if max(abs(dx), abs(dy)) <= args.tolerance_mm:
+            candidate = temp_dir / f"candidate{attempt}.hwpx"
+            candidate_pdf = temp_dir / f"candidate{attempt}.pdf"
+            build(candidate, horizontal_mm, vertical_mm, args.width_mm)
+            export_pdf(candidate, candidate_pdf)
+            rendered_images, _, _ = read_page(candidate_pdf, args.page)
+            actual_bbox = pick_inserted_image(
+                rendered_images,
+                baseline_images,
+                args.width_mm,
+                aspect,
+                (pixel_width, pixel_height),
+            )
+            delta_x = left - actual_bbox[0]
+            delta_y = bottom - actual_bbox[3]
+            final_error = max(abs(delta_x), abs(delta_y))
+            print(
+                f"  {attempt}차: 좌 {actual_bbox[0]:.1f} 상 {actual_bbox[1]:.1f} "
+                f"우 {actual_bbox[2]:.1f} 하 {actual_bbox[3]:.1f} mm "
+                f"오차 좌 {-delta_x:+.2f} 하 {-delta_y:+.2f}"
+            )
+            if final_error <= args.tolerance_mm:
+                verified_candidate = candidate
                 break
-            horz, vert = horz + dx, vert + dy
+            horizontal_mm += delta_x
+            vertical_mm += delta_y
+
+        if verified_candidate is None:
+            raise SystemExit(
+                f"배치 오차가 허용치 {args.tolerance_mm:.2f}mm 안에 들지 않았습니다 "
+                f"(최종 {final_error:.2f}mm). 출력하지 않았습니다."
+            )
+        if output.exists() and not args.overwrite:
+            raise SystemExit(f"작업 중 같은 이름의 파일이 생겨 출력하지 않았습니다: {output}")
+
+        pending_fd, pending_name = tempfile.mkstemp(
+            prefix=f".{output.stem}_",
+            suffix=".pending",
+            dir=output.parent,
+        )
+        os.close(pending_fd)
+        pending = Path(pending_name)
+        try:
+            shutil.copy2(verified_candidate, pending)
+            if output.exists() and not args.overwrite:
+                raise SystemExit(f"작업 중 같은 이름의 파일이 생겨 출력하지 않았습니다: {output}")
+            os.replace(pending, output)
+        finally:
+            if pending.exists():
+                pending.unlink()
 
         print(f"\n저장: {output}")
-        print(f"  방식 overlay(BEHIND_TEXT), 크기 {args.width_mm} x {height_mm:.1f}mm")
-        print(f"  앵커 문단 {args.anchor_para!r}, horzOffset {horz:.1f}mm, vertOffset {vert:.1f}mm")
+        mode = "page(BEHIND_TEXT, 쪽 기준)" if args.page_relative else "overlay(BEHIND_TEXT)"
+        print(f"  방식 {mode}, 크기 {args.width_mm:.1f} x {height_mm:.1f}mm")
+        print(
+            f"  앵커 문단 {args.anchor_para!r}, "
+            f"horzOffset {horizontal_mm:.1f}mm, vertOffset {vertical_mm:.1f}mm"
+        )
         return 0
     finally:
-        for f in tmp.glob("*"):
-            try:
-                f.unlink()
-            except OSError:
-                pass
-        try:
-            os.rmdir(tmp)
-        except OSError:
-            pass
+        _cleanup_temp_dir(temp_dir)
 
 
 if __name__ == "__main__":
