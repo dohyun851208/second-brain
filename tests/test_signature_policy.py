@@ -8,9 +8,9 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class ImagePolicyTests(unittest.TestCase):
-    def test_system_version_is_3_7(self):
+    def test_system_version_is_3_8(self):
         agents = (ROOT / "templates" / "AGENTS.md").read_text(encoding="utf-8")
-        self.assertIn("시스템 버전: 3.7", agents)
+        self.assertIn("시스템 버전: 3.8", agents)
 
     def test_required_signature_discovery_is_a_routing_trigger(self):
         skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")

@@ -15,7 +15,7 @@ class KordocPolicyTests(unittest.TestCase):
 
     def test_reviewed_version_and_range_are_explicit(self):
         self.assertIn("@^4", self.reference)
-        self.assertIn("4.9.2", self.reference)
+        self.assertIn("4.14.0", self.reference)
         self.assertIn("엔진 소스", self.reference)
 
     def test_v4_parse_contract_is_documented(self):
@@ -32,6 +32,17 @@ class KordocPolicyTests(unittest.TestCase):
         self.assertIn("--munche", self.reference)
         self.assertIn("`md`/`txt`", self.reference)
         self.assertIn("HWP/HWPX/PDF를 직접 넘기지", self.reference)
+
+    def test_v4_10_failure_and_image_bundle_contracts_are_documented(self):
+        for term in ("success", "IMAGE_BASED_PDF", "manifest.json", "exit 2", "LF"):
+            self.assertIn(term, self.reference)
+        parser = (ROOT / "templates" / "8_시스템" / "파서-프롬프트.md").read_text(encoding="utf-8")
+        self.assertIn("IMAGE_BASED_PDF", parser)
+        self.assertIn("manifest.json", parser)
+
+    def test_generate_image_filename_trap_is_documented(self):
+        self.assertIn("이미지 파일명은 영문·숫자", self.reference)
+        self.assertIn("이미지 임베드", self.reference)
 
     def test_new_and_existing_document_image_routes_are_distinct(self):
         self.assertIn("generate --image-dir", self.reference)

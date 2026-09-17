@@ -18,7 +18,7 @@
 | `8_시스템/` | 두뇌 제작·갱신 도구 (파서·컴파일러 프롬프트, 갱신 절차, 이력 로그) | 두뇌 갱신 시 |
 | `9_형식/` | Kordoc 기반 hwp/hwpx·xls/xlsx 작업 + 승인 이미지 HWP/HWPX 실측 배치 | 해당 형식 작업 시 |
 
-문서 파싱·편집에는 [chrisryugj가 개발한 kordoc](https://github.com/chrisryugj/kordoc)을 사용합니다. kordoc은 별도의 오픈소스 프로젝트이며 **MIT 라이선스**로 배포됩니다. 시스템 3.7은 Kordoc 4.9.2의 공식 소스와 CLI 계약을 검증했습니다.
+문서 파싱·편집에는 [chrisryugj가 개발한 kordoc](https://github.com/chrisryugj/kordoc)을 사용합니다. kordoc은 별도의 오픈소스 프로젝트이며 **MIT 라이선스**로 배포됩니다. 시스템 3.8은 Kordoc 4.14.0의 공식 소스와 CLI 계약을 검증했습니다.
 
 파이프라인: `0_원본`(아무 형식) →파싱→ `1_파싱`(전부 md) →증류→ `2_두뇌`(판단 규칙).
 파싱과 증류는 각각 승인 후 실행되며, 사이에서 변환 품질을 직접 검수할 수 있습니다.

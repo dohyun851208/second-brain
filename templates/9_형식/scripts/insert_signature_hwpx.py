@@ -91,13 +91,16 @@ def unique_manifest_id(content_hpf: str, base: str = "image") -> str:
 
 
 def unique_bindata_name(names: set[str], base: str = "image", ext: str = ".png") -> str:
+    # Hancom resolves BinData paths case-insensitively: image2.png would collide
+    # with an existing image2.PNG and the wrong picture would be rendered.
+    used = {name.lower() for name in names}
     candidate = f"BinData/{base}{ext}"
-    if candidate not in names:
+    if candidate.lower() not in used:
         return candidate
     n = 2
     while True:
         candidate = f"BinData/{base}{n}{ext}"
-        if candidate not in names:
+        if candidate.lower() not in used:
             return candidate
         n += 1
 
@@ -160,11 +163,15 @@ def make_pic_run(
     natural_height = pixel_height * HWPUNIT_PER_PX
     scale = width / natural_width if natural_width else 1.0
 
-    if placement == "overlay":
+    if placement in ("overlay", "page"):
         text_wrap = "BEHIND_TEXT"
+        # "page" pins the picture to the sheet instead of the anchor paragraph, so a
+        # tall image inside a fixed-height form box cannot push the layout around.
+        vert_rel, horz_rel = ("PAGE", "PAGE") if placement == "page" else ("PARA", "COLUMN")
+        flow_with_text = "0" if placement == "page" else "1"
         position = (
-            f'<hp:pos treatAsChar="0" affectLSpacing="0" flowWithText="1" allowOverlap="0" '
-            f'holdAnchorAndSO="0" vertRelTo="PARA" horzRelTo="COLUMN" '
+            f'<hp:pos treatAsChar="0" affectLSpacing="0" flowWithText="{flow_with_text}" allowOverlap="0" '
+            f'holdAnchorAndSO="0" vertRelTo="{vert_rel}" horzRelTo="{horz_rel}" '
             f'vertAlign="TOP" horzAlign="LEFT" '
             f'vertOffset="{vert_offset}" horzOffset="{horz_offset}"/>'
         )
@@ -234,18 +241,80 @@ def find_insert_point(section: str, anchor: str, occurrence: str) -> tuple[int, 
     return absolute_insert_pos, char_pr, visible_text(para_xml).strip(), text_before
 
 
+def paragraph_spans(section: str) -> list[tuple[int, int]]:
+    """(start, end) of every <hp:p>, including the ones nested in table cells."""
+    spans: list[tuple[int, int]] = []
+    stack: list[int] = []
+    for match in re.finditer(r"<hp:p\b[^>]*?(/?)>|</hp:p>", section):
+        if match.group(0).startswith("</"):
+            if stack:
+                spans.append((stack.pop(), match.end()))
+        elif match.group(1) != "/":
+            stack.append(match.start())
+    return sorted(spans)
+
+
 def find_para_anchor(section: str, para_text: str, occurrence: str) -> tuple[int, str]:
     """Return the first run position of a unique paragraph used as float anchor."""
-    matches = [match for match in PARA_RE.finditer(section) if para_text in visible_text(match.group(0))]
+    matches = [
+        span for span in paragraph_spans(section) if para_text in visible_text(section[span[0] : span[1]])
+    ]
     if not matches:
         raise ValueError(f"Anchor paragraph not found: {para_text}")
-    paragraph_match = matches[0] if occurrence == "first" else matches[-1]
-    paragraph_xml = paragraph_match.group(0)
+    # The paragraph that hosts a table also "contains" every cell's text. Anchoring
+    # there drops the picture on the empty line above the table and grows that line,
+    # so keep only the paragraphs that hold no other match inside them.
+    innermost = [
+        (start, end)
+        for start, end in matches
+        if not any(other != (start, end) and start <= other[0] and other[1] <= end for other in matches)
+    ]
+    start, end = (innermost or matches)[0 if occurrence == "first" else -1]
+    paragraph_xml = section[start:end]
     run_match = RUN_RE.search(paragraph_xml)
     if not run_match:
         raise ValueError("Anchor paragraph has no hp:run element.")
     char_pr = attr_value(run_match.group(0), "charPrIDRef", "13")
-    return paragraph_match.start() + run_match.start(), char_pr
+    return start + run_match.start(), char_pr
+
+
+def section_names(zin: zipfile.ZipFile) -> list[str]:
+    """Contents/sectionN.xml in document order."""
+    found = []
+    for name in zin.namelist():
+        match = re.fullmatch(r"Contents/section(\d+)\.xml", name)
+        if match:
+            found.append((int(match.group(1)), name))
+    if not found:
+        raise ValueError("No Contents/sectionN.xml found.")
+    return [name for _, name in sorted(found)]
+
+
+def read_anchor_section(
+    zin: zipfile.ZipFile,
+    anchor_para: str | None,
+    anchor: str,
+    occurrence: str,
+) -> tuple[str, str]:
+    """Return the (name, xml) of the section holding the anchor.
+
+    A HWPX splits at section breaks, so the target text is often not in
+    section0; picking the wrong section silently anchors somewhere else.
+    """
+    names = section_names(zin)
+    last_error: Exception | None = None
+    for name in names:
+        xml = zin.read(name).decode("utf-8")
+        try:
+            if anchor_para:
+                find_para_anchor(xml, anchor_para, occurrence)
+            else:
+                find_insert_point(xml, anchor, occurrence)
+        except ValueError as exc:
+            last_error = exc
+            continue
+        return name, xml
+    raise last_error or ValueError("Anchor not found in any section.")
 
 
 def max_z_order(section: str) -> int:
@@ -300,7 +369,7 @@ def insert_image(
 
     with zipfile.ZipFile(source, "r") as zin:
         names = set(zin.namelist())
-        section = zin.read("Contents/section0.xml").decode("utf-8")
+        section_name, section = read_anchor_section(zin, anchor_para, anchor, occurrence)
         content_hpf = zin.read("Contents/content.hpf").decode("utf-8")
         header_xml = zin.read("Contents/header.xml").decode("utf-8")
 
@@ -332,7 +401,7 @@ def insert_image(
             height_hwpunit = round(line_height * fit_line)
             width_hwpunit = round(height_hwpunit * img_w / img_h)
 
-        if placement == "overlay":
+        if placement in ("overlay", "page"):
             if horz_offset_hwpunit is None:
                 if anchor_para:
                     raise ValueError(
@@ -360,7 +429,7 @@ def insert_image(
             placement=placement,
             vert_offset=vert_offset_hwpunit,
             horz_offset=horz_offset_hwpunit,
-            z_order=max_z_order(section) + 1 if placement == "overlay" else 0,
+            z_order=max_z_order(section) + 1 if placement in ("overlay", "page") else 0,
         )
         section_new = section[:insert_pos] + pic_xml + section[insert_pos:]
 
@@ -377,7 +446,7 @@ def insert_image(
             with zipfile.ZipFile(tmp, "w") as zout:
                 for info in zin.infolist():
                     data = zin.read(info.filename)
-                    if info.filename == "Contents/section0.xml":
+                    if info.filename == section_name:
                         data = section_new.encode("utf-8")
                     elif info.filename == "Contents/content.hpf":
                         data = content_hpf_new.encode("utf-8")

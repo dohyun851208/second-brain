@@ -220,6 +220,12 @@ def parse_args(argv):
     parser.add_argument("--occurrence", choices=("first", "last"), default="last")
     parser.add_argument("--tolerance-mm", type=float, default=0.3)
     parser.add_argument("--page", type=int, default=0, help="0-based page index")
+    parser.add_argument(
+        "--page-relative",
+        action="store_true",
+        help="Pin to the sheet, not the anchor paragraph, so a tall image cannot "
+        "grow a fixed-height form box and push the layout onto a new page",
+    )
     parser.add_argument("--overwrite", action="store_true")
     return parser.parse_args(argv)
 
@@ -379,7 +385,7 @@ def main(argv=None):
                 occurrence=args.occurrence,
                 width_hwpunit=round(display_width_mm * 7200 / 25.4),
                 overwrite=True,
-                placement="overlay",
+                placement="page" if args.page_relative else "overlay",
                 vert_offset_hwpunit=round(vertical_mm * 7200 / 25.4),
                 horz_offset_hwpunit=round(horizontal_mm * 7200 / 25.4),
                 anchor_para=args.anchor_para,
@@ -514,7 +520,8 @@ def main(argv=None):
                 pending.unlink()
 
         print(f"\n저장: {output}")
-        print(f"  방식 overlay(BEHIND_TEXT), 크기 {args.width_mm:.1f} x {height_mm:.1f}mm")
+        mode = "page(BEHIND_TEXT, 쪽 기준)" if args.page_relative else "overlay(BEHIND_TEXT)"
+        print(f"  방식 {mode}, 크기 {args.width_mm:.1f} x {height_mm:.1f}mm")
         print(
             f"  앵커 문단 {args.anchor_para!r}, "
             f"horzOffset {horizontal_mm:.1f}mm, vertOffset {vertical_mm:.1f}mm"

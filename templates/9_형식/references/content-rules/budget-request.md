@@ -1,6 +1,6 @@
 # 성립전 예산 요구서 내용 규칙
 
-성립전 예산 요구서, 부서예산요구서, 예산표는 `references/workflows/xlsx-forms.md`를 먼저 따른 뒤, 이 문서의 내용 규칙을 적용한다.
+성립전 예산 요구서, 부서예산요구서, 예산표는 `9_형식/references/workflows/xlsx-forms.md`를 먼저 따른 뒤, 이 문서의 내용 규칙을 적용한다.
 
 ## 기본 구조
 

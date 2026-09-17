@@ -1,12 +1,12 @@
 # 신청서 내용 규칙
 
-신청서는 `references/workflows/hwpx-forms.md` 또는 `references/workflows/xlsx-forms.md` 같은 형식 workflow를 먼저 따른 뒤, 이 문서의 내용 규칙을 적용한다.
+신청서는 `9_형식/references/workflows/hwpx-forms.md` 또는 `9_형식/references/workflows/xlsx-forms.md` 같은 형식 workflow를 먼저 따른 뒤, 이 문서의 내용 규칙을 적용한다.
 
 ## 우선 자료
 
 - 신청 공고문 또는 안내문
 - 사용자가 제공한 신청서 양식
-- `docs/이력서.md`, `docs/연수이수목록.md`, 관련 증빙 요약
+- `2_두뇌/팩트카드.md`, `2_두뇌/index.md` 대장이 가리키는 이력 원본의 `1_파싱/` 파싱본, 관련 증빙 요약
 
 ## 작성 기준
 

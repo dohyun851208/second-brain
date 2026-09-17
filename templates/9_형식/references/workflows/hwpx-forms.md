@@ -20,6 +20,7 @@ npx -y kordoc@^4 patch 원본.hwpx 편집.md -o 원본_완성본.hwpx
 ```
 
 `patch`는 원본 포맷을 유지한다. 내장 재검증을 끄는 `--no-verify`는 사용하지 않는다.
+편집 md는 파싱본과 같은 LF 줄바꿈으로 저장한다(CRLF면 표 편집이 전부 skip된다). exit 0이면 전부 적용, exit 2면 stderr의 `SKIP` 목록에 미적용 편집이 있으니 지원되는 형태로 다시 반영하거나 사용자에게 알린다.
 
 ### HWPX 양식 채우기
 
@@ -41,19 +42,20 @@ npx -y kordoc@^4 fill 양식.hwpx -j 값.json -o 양식_완성본.hwpx --require
 npx -y kordoc@^4 lint 초안.md --munche
 npx -y kordoc@^4 generate 초안.md -o 결과.hwpx --preset 보고서
 
-# 마크다운의 ![](사진.png)를 실제 이미지로 임베드할 때
+# 마크다운의 ![](photo.png)를 실제 이미지로 임베드할 때 (이미지 파일명은 영문·숫자)
 npx -y kordoc@^4 generate 초안.md -o 결과.hwpx --preset 보고서 --image-dir ".\images"
 ```
 
 - `lint`는 md/txt 원고에만 사용한다. 보고서·계획서는 `--munche`를 붙이고, 기안문·통지·회의록은 문체 관행이 달라 기본 lint만 쓴다.
-- 새 문서의 마크다운 이미지는 `--image-dir`로 Kordoc이 직접 임베드한다. 이 경우 `place_image.py`를 쓰지 않는다.
+- 새 문서의 마크다운 이미지는 `--image-dir`로 Kordoc이 직접 임베드한다. 이 경우 `9_형식/scripts/place_image.py`를 쓰지 않는다. 이미지 파일명은 영문·숫자로 두고, 생성 stderr의 "이미지 임베드: N개"가 md의 이미지 참조 수와 같은지 확인한다(한글 파일명은 조용히 건너뛴다).
+- 보고서·계획서는 제목 직후 인용문(`>`)에 보고 목적 한 문장을 쓴다(요약박스, 없으면 경고). 4.13부터 위계·글꼴은 실결재 실측값으로 고정되며 마크다운 형태와 무관하게 같은 단계로 정규화된다. 세부 옵션은 `9_형식/references/kordoc.md`의 generate 절.
 
 ## 3. 기존 문서의 승인 이미지 지정 위치 배치
 
 Kordoc `generate --image-dir`로 새 문서를 만드는 경우가 아니라, 서명·도장·신분증·통장사본·증명사진·일반 사진을 **기존 HWP/HWPX의 지정 위치**에 넣어야 할 때만 텍스트 작업을 끝낸 뒤 마지막에 배치한다. 개인정보 자산 사용 승인은 `7_개인정보이미지/_안내.md`를 따른다.
 특정 문서와 이미지를 사용자가 직접 지정했다면 그 범위는 승인된 것으로 본다. 실행 여부는 최초 요청 문구가 아니라 최종 제출 요건과 승인 상태로 결정한다. 필수 개인정보 이미지·서명·날인란을 발견했지만 승인이 없으면 사용할 자산과 용도를 한 번 확인하고, 승인 뒤 같은 작업을 계속한다. 선택·모호한 이미지란은 자동 삽입하지 않으며 필수란을 말없이 비운 채 완성본으로 보고하지 않는다. 별도 파일 첨부 요구는 문서 안 삽입으로 대체하지 않는다.
 
-정본은 `scripts/place_image.py`다. 호환용 `place_signature.py`, Kordoc `seal`, 내부 모듈 `hwp_to_hwpx.py`·`insert_signature_hwpx.py`를 새 작업에서 직접 호출하지 않는다.
+정본은 `9_형식/scripts/place_image.py`다. 호환용 `9_형식/scripts/place_signature.py`, Kordoc `seal`, 내부 모듈 `9_형식/scripts/hwp_to_hwpx.py`·`9_형식/scripts/insert_signature_hwpx.py`를 새 작업에서 직접 호출하지 않는다.
 
 필요 조건:
 
@@ -63,23 +65,23 @@ Kordoc `generate --image-dir`로 새 문서를 만드는 경우가 아니라, �
 
 ```powershell
 # 위치 조사
-py -3 scripts/place_image.py "신청서.hwpx" "통장사본.jpg" `
+py -3 9_형식/scripts/place_image.py "신청서.hwpx" "통장사본.jpg" `
   --report --find "통장사본" --find "(서명)"
 
 # 이름 끝에서 시작하도록 실측 배치
-py -3 scripts/place_image.py "신청서.hwpx" "서명.png" `
+py -3 9_형식/scripts/place_image.py "신청서.hwpx" "서명.png" `
   --output "신청서_완성본.hwpx" `
   --anchor-para "신청인은 위 내용에 동의합니다" `
   --after-text "홍길동" --width-mm 24
 
 # 일반 이미지: 조사한 좌·상단에 비율을 유지해 배치
-py -3 scripts/place_image.py "신청서.hwpx" "통장사본.jpg" `
+py -3 9_형식/scripts/place_image.py "신청서.hwpx" "통장사본.jpg" `
   --output "신청서_완성본.hwpx" `
   --anchor-para "첨부 이미지" `
   --target-left-mm 25 --target-top-mm 120 --width-mm 80
 
 # HWP 입력: 내부에서 임시 HWPX로 한 번 변환한 뒤 같은 실측 배치 실행
-py -3 scripts/place_image.py "신청서.hwp" "증명사진.jpg" `
+py -3 9_형식/scripts/place_image.py "신청서.hwp" "증명사진.jpg" `
   --output "신청서_완성본.hwpx" `
   --anchor-para "사진" `
   --target-left-mm 150 --target-top-mm 25 --width-mm 30
@@ -87,7 +89,7 @@ py -3 scripts/place_image.py "신청서.hwp" "증명사진.jpg" `
 
 - `--anchor-para`는 목표 줄보다 위에 있는 고유 문단을 사용한다.
 - `--after-text`는 글자 옆 서명·도장에 사용한다. 일반 이미지는 `--report`와 렌더를 확인한 뒤 `--target-left-mm` + `--target-top-mm`(또는 `--target-bottom-mm`)으로 명시 배치한다.
-- `hwp_to_hwpx.py`와 `insert_signature_hwpx.py`는 내부 모듈이므로 직접 실행하지 않는다.
+- `9_형식/scripts/hwp_to_hwpx.py`와 `9_형식/scripts/insert_signature_hwpx.py`는 내부 모듈이므로 직접 실행하지 않는다.
 - 스크립트는 이미지 원본 비율을 유지하고, 탐침 렌더 → 실측 → 역산 → 결과 렌더 검증과 페이지 경계 검사를 수행한다.
 - 여러 이미지는 검증된 앞 단계 HWPX를 다음 단계 입력으로 순차 처리하고 최종본을 만든 뒤 중간본을 정리한다.
 - 기존 출력은 기본적으로 덮어쓰지 않는다. 사용자가 교체를 명시한 경우에만 `--overwrite`를 쓴다.
@@ -98,6 +100,7 @@ py -3 scripts/place_image.py "신청서.hwp" "증명사진.jpg" `
 ## 4. 검증
 
 - 일반 HWP/HWPX: `npx -y kordoc@^4 validate 결과.hwpx`와 핵심 값 확인. 새 공문 원고는 생성 전 lint 경고도 확인.
-- 승인 이미지: `place_image.py`의 XML 구조 검사와 한컴 렌더 실측 결과를 확인.
+- 조판을 눈으로 확인해야 하면 `npx -y kordoc@^4 render 결과.hwpx --format png -d 쪽/`으로 쪽별 PNG를 본다 (`.hwp`도 가능).
+- 승인 이미지: `9_형식/scripts/place_image.py`의 XML 구조 검사와 한컴 렌더 실측 결과를 확인.
 - 원본 대비 페이지·표·핵심 문구가 바뀌지 않았는지 확인한다.
 - 임시 렌더와 작업 파일은 정리하고 최종 산출물만 남긴다.
