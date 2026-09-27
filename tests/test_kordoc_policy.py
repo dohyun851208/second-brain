@@ -15,7 +15,7 @@ class KordocPolicyTests(unittest.TestCase):
 
     def test_reviewed_version_and_range_are_explicit(self):
         self.assertIn("@^4", self.reference)
-        self.assertIn("4.14.0", self.reference)
+        self.assertIn("4.15.6", self.reference)
         self.assertIn("엔진 소스", self.reference)
 
     def test_v4_parse_contract_is_documented(self):
@@ -39,6 +39,17 @@ class KordocPolicyTests(unittest.TestCase):
         parser = (ROOT / "templates" / "8_시스템" / "파서-프롬프트.md").read_text(encoding="utf-8")
         self.assertIn("IMAGE_BASED_PDF", parser)
         self.assertIn("manifest.json", parser)
+
+    def test_v4_15_output_folder_trap_is_documented(self):
+        # 출력 폴더가 없으면 입력이 멀쩡해도 FILE_NOT_FOUND — 파서가 "원본 없음"으로 오판하지 않게
+        self.assertIn("FILE_NOT_FOUND", self.reference)
+        parser = (ROOT / "templates" / "8_시스템" / "파서-프롬프트.md").read_text(encoding="utf-8")
+        self.assertIn("FILE_NOT_FOUND", parser)
+        self.assertIn("폴더는 실행 전에 만든다", parser)
+
+    def test_redact_default_rules_match_engine(self):
+        self.assertIn("rrn,phone,email,card,account,brn,passport,driver", self.reference)
+        self.assertNotIn("여권·운전면허는 `--rules`로 opt-in", self.reference)
 
     def test_generate_image_filename_trap_is_documented(self):
         self.assertIn("이미지 파일명은 영문·숫자", self.reference)
