@@ -26,6 +26,16 @@ HWPUNIT_PER_MM = 7200 / 25.4
 HWPUNIT_PER_PX = 75
 RUN_RE = re.compile(r"<hp:run\b.*?</hp:run>|<hp:run\b[^>]*/>", re.DOTALL)
 PARA_RE = re.compile(r"<hp:p\b.*?</hp:p>", re.DOTALL)
+CORE_NS = 'xmlns:hc="http://www.hancom.co.kr/hwpml/2011/core"'
+
+
+def ensure_core_namespace(section: str) -> str:
+    """Declare hc: on the section root; Kordoc-generated sections omit it."""
+    root = re.search(r"<hs:sec\b[^>]*>", section)
+    if not root or "xmlns:hc=" in root.group(0):
+        return section
+    tag = root.group(0)
+    return section[: root.start()] + f"{tag[:-1]} {CORE_NS}>" + section[root.end() :]
 
 
 def visible_text(xml: str) -> str:
@@ -169,8 +179,11 @@ def make_pic_run(
         # tall image inside a fixed-height form box cannot push the layout around.
         vert_rel, horz_rel = ("PAGE", "PAGE") if placement == "page" else ("PARA", "COLUMN")
         flow_with_text = "0" if placement == "page" else "1"
+        # A seal is meant to sit on top of a table. With allowOverlap="0" Hancom
+        # moves things apart instead, which reflowed a two-page form (rows moved
+        # from page 1 to page 2) whenever the picture touched the table.
         position = (
-            f'<hp:pos treatAsChar="0" affectLSpacing="0" flowWithText="{flow_with_text}" allowOverlap="0" '
+            f'<hp:pos treatAsChar="0" affectLSpacing="0" flowWithText="{flow_with_text}" allowOverlap="1" '
             f'holdAnchorAndSO="0" vertRelTo="{vert_rel}" horzRelTo="{horz_rel}" '
             f'vertAlign="TOP" horzAlign="LEFT" '
             f'vertOffset="{vert_offset}" horzOffset="{horz_offset}"/>'
@@ -271,11 +284,20 @@ def find_para_anchor(section: str, para_text: str, occurrence: str) -> tuple[int
     ]
     start, end = (innermost or matches)[0 if occurrence == "first" else -1]
     paragraph_xml = section[start:end]
-    run_match = RUN_RE.search(paragraph_xml)
-    if not run_match:
+    runs = list(RUN_RE.finditer(paragraph_xml))
+    if not runs:
         raise ValueError("Anchor paragraph has no hp:run element.")
-    char_pr = attr_value(run_match.group(0), "charPrIDRef", "13")
-    return start + run_match.start(), char_pr
+    # A document's first paragraph opens with the run that defines the section
+    # (page size and margins, hp:secPr) and its columns (hp:colPr). Hancom reads
+    # them only from the leading run, so a picture run placed before them silently
+    # resets the whole page to default margins. Insert after those runs instead.
+    insert_at = runs[0].start()
+    for run in runs:
+        if "<hp:secPr" not in run.group(0) and "<hp:colPr" not in run.group(0):
+            break
+        insert_at = run.end()
+    char_pr = attr_value(runs[0].group(0), "charPrIDRef", "13")
+    return start + insert_at, char_pr
 
 
 def section_names(zin: zipfile.ZipFile) -> list[str]:
@@ -370,6 +392,7 @@ def insert_image(
     with zipfile.ZipFile(source, "r") as zin:
         names = set(zin.namelist())
         section_name, section = read_anchor_section(zin, anchor_para, anchor, occurrence)
+        section = ensure_core_namespace(section)
         content_hpf = zin.read("Contents/content.hpf").decode("utf-8")
         header_xml = zin.read("Contents/header.xml").decode("utf-8")
 

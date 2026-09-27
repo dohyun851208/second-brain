@@ -45,8 +45,23 @@ PROBE_VERT_MM = 5.0
 PROBE_MAX_DIM_MM = 24.0
 
 
-def export_pdf(hwpx: Path, pdf: Path) -> None:
-    """Export through Hancom COM without saving the source HWPX."""
+def export_pdf(hwpx: Path, pdf: Path, attempts: int = 2) -> None:
+    """Export through Hancom COM without saving the source HWPX.
+
+    Hancom automation now and then returns without writing the PDF when
+    instances are started back to back, so the export is tried once more.
+    """
+    for _ in range(attempts):
+        try:
+            _export_once(hwpx, pdf)
+        except Exception as exc:  # pragma: no cover - COM errors vary by version
+            print(f"WARN: 한컴 PDF 내보내기 오류 — 다시 시도합니다: {exc}")
+        if pdf.exists() and pdf.stat().st_size > 0:
+            return
+    raise SystemExit(f"한컴 PDF 렌더링 실패: {pdf}")
+
+
+def _export_once(hwpx: Path, pdf: Path) -> None:
     try:
         import win32com.client as win32
     except ImportError as exc:  # pragma: no cover - environment dependent
@@ -74,8 +89,40 @@ def export_pdf(hwpx: Path, pdf: Path) -> None:
         except Exception:
             pass
 
-    if not pdf.exists() or pdf.stat().st_size == 0:
-        raise SystemExit(f"한컴 PDF 렌더링 실패: {pdf}")
+
+def read_text_layout(pdf: Path) -> list[list[tuple[str, float, float]]]:
+    """Every word on every page as (text, left mm, top mm), sorted per page."""
+    try:
+        import fitz
+    except ImportError as exc:  # pragma: no cover
+        raise SystemExit("PyMuPDF가 필요합니다: py -3 -m pip install pymupdf") from exc
+
+    with fitz.open(pdf) as doc:
+        return [
+            sorted(
+                (word[4], round(word[0] * MM_PER_PT, 2), round(word[1] * MM_PER_PT, 2))
+                for word in page.get_text("words")
+            )
+            for page in doc
+        ]
+
+
+def layout_change(before, after, tolerance_mm: float = 0.5) -> str | None:
+    """Describe the first word that moved, or None when every page still matches.
+
+    A picture placed behind the text must not move any text. Checking only the
+    picture's own position missed a run that reset the page margins, and a
+    picture touching a table can push rows onto the next page.
+    """
+    if len(before) != len(after):
+        return f"쪽 수 {len(before)} → {len(after)}"
+    for number, (old, new) in enumerate(zip(before, after), 1):
+        if len(old) != len(new):
+            return f"{number}쪽 글자 수 {len(old)} → {len(new)}"
+        for (text, x0, y0), (text_after, x1, y1) in zip(old, new):
+            if text != text_after or abs(x1 - x0) > tolerance_mm or abs(y1 - y0) > tolerance_mm:
+                return f"{number}쪽 {text!r} 가로 {x1 - x0:+.1f}mm 세로 {y1 - y0:+.1f}mm"
+    return None
 
 
 def read_page(pdf: Path, page_no: int = 0):
@@ -107,6 +154,16 @@ def read_page(pdf: Path, page_no: int = 0):
         doc.close()
 
 
+def reading_order(hits):
+    """Sort text matches top-to-bottom, then left-to-right.
+
+    PyMuPDF returns matches in drawing order, and Hancom may draw a table's text
+    after the lines below it. "first" and "last" must mean the topmost and the
+    bottommost match on the page, or the default can land on the wrong name.
+    """
+    return sorted(hits, key=lambda rect: (round(rect.y0), rect.x0))
+
+
 def find_phrase(pdf: Path, needle: str, occurrence: str, page_no: int = 0):
     """Locate text on a rendered page and return its bbox in millimetres."""
     try:
@@ -118,11 +175,15 @@ def find_phrase(pdf: Path, needle: str, occurrence: str, page_no: int = 0):
     try:
         if page_no < 0 or page_no >= len(doc):
             raise SystemExit(f"쪽 번호 범위 오류: {page_no} (전체 {len(doc)}쪽)")
-        hits = doc[page_no].search_for(needle)
+        hits = reading_order(doc[page_no].search_for(needle))
     finally:
         doc.close()
     if not hits:
         raise SystemExit(f"본문에서 찾지 못했습니다: {needle!r}")
+    if len(hits) > 1:
+        tops = ", ".join(f"상 {rect.y0 * MM_PER_PT:.0f}mm" for rect in hits)
+        chosen = "맨 위" if occurrence == "first" else "맨 아래"
+        print(f"  {needle!r}이(가) 쪽에 {len(hits)}곳({tops}) — {chosen}를 사용 (--occurrence {occurrence})")
     hit = hits[0] if occurrence == "first" else hits[-1]
     return tuple(v * MM_PER_PT for v in hit)
 
@@ -149,8 +210,16 @@ def pick_inserted_image(
             continue
         width_error = abs(width - want_width_mm)
         aspect_error = abs((width / height) - aspect)
-        pixel_error = abs(image["px"][0] - source_px[0]) + abs(image["px"][1] - source_px[1])
-        if width_error > 0.6 or aspect_error > 0.03 * aspect or pixel_error > 4:
+        # Hancom's PDF export downsamples pictures above about 500 dpi, so a
+        # high-resolution image comes back with fewer pixels. Accept a uniform
+        # downscale; reject anything larger or with a different pixel shape.
+        px_w, px_h = image["px"]
+        if px_w > source_px[0] + 4 or px_h > source_px[1] + 4 or px_h <= 0:
+            continue
+        if abs(px_w / px_h - source_px[0] / source_px[1]) > 0.03 * aspect:
+            continue
+        pixel_error = abs(px_w - source_px[0]) + abs(px_h - source_px[1])
+        if width_error > 0.6 or aspect_error > 0.03 * aspect:
             continue
         is_baseline = any(_same_rendered_image(image, old) for old in baseline_images)
         score = width_error + aspect_error + pixel_error / 1000
@@ -317,17 +386,19 @@ def main(argv=None):
                     raise SystemExit("PyMuPDF가 필요합니다: py -3 -m pip install pymupdf") from exc
                 doc = fitz.open(source_pdf)
                 try:
-                    hits = doc[args.page].search_for(needle)
+                    hits = reading_order(doc[args.page].search_for(needle))
                 finally:
                     doc.close()
                 if not hits:
                     print("  (찾지 못함)")
-                for hit in hits:
+                for number, hit in enumerate(hits, 1):
                     bbox = [value * MM_PER_PT for value in hit]
                     print(
-                        f"  좌 {bbox[0]:6.1f} 상 {bbox[1]:6.1f} "
+                        f"  {number}. 좌 {bbox[0]:6.1f} 상 {bbox[1]:6.1f} "
                         f"우 {bbox[2]:6.1f} 하 {bbox[3]:6.1f}"
                     )
+                if len(hits) > 1:
+                    print("  (위→아래 순서. --occurrence first는 1번, last는 마지막 번호)")
             print(
                 f"\n이미지 {pixel_width}x{pixel_height}px를 폭 {args.width_mm}mm로 넣으면 "
                 f"높이 {height_mm:.1f}mm입니다."
@@ -370,6 +441,7 @@ def main(argv=None):
         source_pdf = temp_dir / "source.pdf"
         export_pdf(working_source, source_pdf)
         baseline_images, _, page_rect = read_page(source_pdf, args.page)
+        source_layout = read_text_layout(source_pdf)
 
         def build(
             destination: Path,
@@ -398,8 +470,20 @@ def main(argv=None):
             PROBE_MAX_DIM_MM,
             PROBE_MAX_DIM_MM * aspect,
         )
-        build(probe, PROBE_HORZ_MM, PROBE_VERT_MM, probe_width_mm)
-        export_pdf(probe, probe_pdf)
+        # Every measurement below is taken from the probe render, so the probe must
+        # leave the page exactly as it was. Fall back to the anchor's own corner.
+        for probe_horz, probe_vert in ((PROBE_HORZ_MM, PROBE_VERT_MM), (0.0, 0.0)):
+            build(probe, probe_horz, probe_vert, probe_width_mm)
+            export_pdf(probe, probe_pdf)
+            moved = layout_change(source_layout, read_text_layout(probe_pdf))
+            if moved is None:
+                break
+            print(f"탐침 offset({probe_horz}, {probe_vert})이 원본 배치를 바꿈: {moved}")
+        else:
+            raise SystemExit(
+                "탐침 그림이 원본 배치를 바꿔 위치를 잴 수 없습니다. --anchor-para를 목표 바로 위 "
+                "문단으로 바꾸거나 --page-relative로 다시 시도하세요. 출력하지 않았습니다."
+            )
         probe_images, words, _ = read_page(probe_pdf, args.page)
         probe_bbox = pick_inserted_image(
             probe_images,
@@ -409,10 +493,10 @@ def main(argv=None):
             (pixel_width, pixel_height),
         )
 
-        column_origin = probe_bbox[0] - PROBE_HORZ_MM
-        paragraph_origin = probe_bbox[1] - PROBE_VERT_MM
+        column_origin = probe_bbox[0] - probe_horz
+        paragraph_origin = probe_bbox[1] - probe_vert
         print(
-            f"탐침 offset({PROBE_HORZ_MM}, {PROBE_VERT_MM}) -> "
+            f"탐침 offset({probe_horz}, {probe_vert}) -> "
             f"좌 {probe_bbox[0]:.1f} 상 {probe_bbox[1]:.1f} mm"
         )
         print(f"  원점: COLUMN {column_origin:.1f}mm, PARA {paragraph_origin:.1f}mm")
@@ -490,6 +574,12 @@ def main(argv=None):
                 f"오차 좌 {-delta_x:+.2f} 하 {-delta_y:+.2f}"
             )
             if final_error <= args.tolerance_mm:
+                moved = layout_change(source_layout, read_text_layout(candidate_pdf))
+                if moved:
+                    raise SystemExit(
+                        f"그림을 넣은 뒤 원본 배치가 바뀌었습니다({moved}). --page-relative로 "
+                        "다시 시도하거나 --anchor-para를 바꾸세요. 출력하지 않았습니다."
+                    )
                 verified_candidate = candidate
                 break
             horizontal_mm += delta_x
