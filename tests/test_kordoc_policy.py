@@ -15,7 +15,7 @@ class KordocPolicyTests(unittest.TestCase):
 
     def test_reviewed_version_and_range_are_explicit(self):
         self.assertIn("@^4", self.reference)
-        self.assertIn("4.15.6", self.reference)
+        self.assertIn("4.15.7", self.reference)
         self.assertIn("엔진 소스", self.reference)
 
     def test_v4_parse_contract_is_documented(self):
@@ -52,8 +52,19 @@ class KordocPolicyTests(unittest.TestCase):
         self.assertNotIn("여권·운전면허는 `--rules`로 opt-in", self.reference)
 
     def test_generate_image_filename_trap_is_documented(self):
-        self.assertIn("이미지 파일명은 영문·숫자", self.reference)
+        # 4.15.7 embeds Korean file names (#95); the count check stays.
+        self.assertIn("4.15.7에서 수정, #95", self.reference)
         self.assertIn("이미지 임베드", self.reference)
+        self.assertNotIn("이미지 파일명은 영문·숫자로 둔다", self.reference)
+
+    def test_parser_fixes_both_image_link_shapes(self):
+        # 4.15.7 writes `images/image_001.png` after -o (#94); 4.15.6 wrote
+        # `image_001.png`. Rewriting only one shape breaks links after the rename.
+        parser = (ROOT / "templates" / "8_시스템" / "파서-프롬프트.md").read_text(encoding="utf-8")
+        self.assertIn("](images/image_", parser)
+        self.assertIn("](image_", parser)
+        self.assertIn("두 모양을 모두", parser)
+        self.assertIn("초 단위까지만", parser)
 
     def test_new_and_existing_document_image_routes_are_distinct(self):
         self.assertIn("generate --image-dir", self.reference)

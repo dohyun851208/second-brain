@@ -17,8 +17,8 @@ def read(*parts: str) -> str:
 # stop it from being broken on 2026-09-20, and every copy had to be edited
 # whenever the rule changed.
 class ImagePolicyTests(unittest.TestCase):
-    def test_system_version_is_3_10(self):
-        self.assertIn("시스템 버전: 3.10", read("AGENTS.md"))
+    def test_system_version_is_3_11(self):
+        self.assertIn("시스템 버전: 3.11", read("AGENTS.md"))
 
     def test_conductor_keeps_the_rules_that_fail_silently(self):
         agents = read("AGENTS.md")
@@ -90,6 +90,20 @@ class ImagePolicyTests(unittest.TestCase):
         privacy = read("7_개인정보이미지", "_안내.md")
         self.assertIn("별도 파일 첨부", privacy)
         self.assertIn("문서 안", privacy)
+
+    def test_fact_modules_are_named_and_kept_out_of_compilation(self):
+        # A vault added a task notebook and a colleague's fact card on 2026-09-28.
+        # Without these definitions a lint or compile pass would treat them as
+        # someone else's material or as rules to merge.
+        agents = read("AGENTS.md")
+        self.assertIn("업무 수첩", agents)
+        self.assertIn("`2_두뇌/팩트카드-<이름>.md`", agents)
+        self.assertIn("요청에 그 사람이 나올 때만", agents)
+        compiler = read("8_시스템", "컴파일러-프롬프트.md")
+        self.assertIn("팩트카드·업무 수첩은 규칙 모듈이 아니다", compiler)
+        privacy = read("7_개인정보이미지", "_안내.md")
+        self.assertIn("`7_개인정보이미지/<이름>/`", privacy)
+        self.assertIn("문서 명의가 같은 사람인지 대조", privacy)
 
     def test_other_private_images_have_a_safe_storage_folder(self):
         keep = TEMPLATES / "7_개인정보이미지" / "기타이미지" / ".gitkeep"

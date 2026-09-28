@@ -42,12 +42,12 @@ npx -y kordoc@^4 fill 양식.hwpx -j 값.json -o 양식_완성본.hwpx --require
 npx -y kordoc@^4 lint 초안.md --munche
 npx -y kordoc@^4 generate 초안.md -o 결과.hwpx --preset 보고서
 
-# 마크다운의 ![](photo.png)를 실제 이미지로 임베드할 때 (이미지 파일명은 영문·숫자)
+# 마크다운의 ![](photo.png)를 실제 이미지로 임베드할 때
 npx -y kordoc@^4 generate 초안.md -o 결과.hwpx --preset 보고서 --image-dir ".\images"
 ```
 
 - `lint`는 md/txt 원고에만 사용한다. 보고서·계획서는 `--munche`를 붙이고, 기안문·통지·회의록은 문체 관행이 달라 기본 lint만 쓴다.
-- 새 문서의 마크다운 이미지는 `--image-dir`로 Kordoc이 직접 임베드한다. 이 경우 `9_형식/scripts/place_image.py`를 쓰지 않는다. 이미지 파일명은 영문·숫자로 두고, 생성 stderr의 "이미지 임베드: N개"가 md의 이미지 참조 수와 같은지 확인한다(한글 파일명은 조용히 건너뛴다).
+- 새 문서의 마크다운 이미지는 `--image-dir`로 Kordoc이 직접 임베드한다. 이 경우 `9_형식/scripts/place_image.py`를 쓰지 않는다. 생성 stderr의 "이미지 임베드: N개"가 md의 이미지 참조 수와 같은지 확인한다(4.15.6까지는 한글 파일명을 조용히 건너뛰었다).
 - 보고서·계획서는 제목 직후 인용문(`>`)에 보고 목적 한 문장을 쓴다(요약박스, 없으면 경고). 4.13부터 위계·글꼴은 실결재 실측값으로 고정되며 마크다운 형태와 무관하게 같은 단계로 정규화된다. 세부 옵션은 `9_형식/references/kordoc.md`의 generate 절.
 
 ## 3. 기존 문서의 승인 이미지 지정 위치 배치
