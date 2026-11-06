@@ -17,8 +17,8 @@ def read(*parts: str) -> str:
 # stop it from being broken on 2026-09-20, and every copy had to be edited
 # whenever the rule changed.
 class ImagePolicyTests(unittest.TestCase):
-    def test_system_version_is_3_11(self):
-        self.assertIn("시스템 버전: 3.11", read("AGENTS.md"))
+    def test_system_version_is_3_12(self):
+        self.assertIn("시스템 버전: 3.12", read("AGENTS.md"))
 
     def test_conductor_keeps_the_rules_that_fail_silently(self):
         agents = read("AGENTS.md")

@@ -15,7 +15,7 @@ class KordocPolicyTests(unittest.TestCase):
 
     def test_reviewed_version_and_range_are_explicit(self):
         self.assertIn("@^4", self.reference)
-        self.assertIn("4.15.7", self.reference)
+        self.assertIn("**4.24.47 (2026-11-06)**", self.reference)
         self.assertIn("엔진 소스", self.reference)
 
     def test_v4_parse_contract_is_documented(self):
@@ -58,9 +58,10 @@ class KordocPolicyTests(unittest.TestCase):
         self.assertNotIn("이미지 파일명은 영문·숫자로 둔다", self.reference)
 
     def test_parser_fixes_both_image_link_shapes(self):
-        # 4.15.7 writes `images/image_001.png` after -o (#94); 4.15.6 wrote
-        # `image_001.png`. Rewriting only one shape breaks links after the rename.
+        # Current output has per-document image folders; preserve legacy link migration.
         parser = (ROOT / "templates" / "8_시스템" / "파서-프롬프트.md").read_text(encoding="utf-8")
+        self.assertIn("images/<출력 stem>/", parser)
+        self.assertIn("`images/` 전체를 개명하거나 이동하지 않는다", parser)
         self.assertIn("](images/image_", parser)
         self.assertIn("](image_", parser)
         self.assertIn("두 모양을 모두", parser)

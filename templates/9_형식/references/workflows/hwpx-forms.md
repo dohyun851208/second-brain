@@ -14,22 +14,28 @@ Kordoc이 안전하게 처리하지 못하면 원본을 그대로 두고 실패 
 
 ### 기존 내용 수정
 
+먼저 `--keep-layout-tables --keep-empty-cols`로 편집용 원고를 따로 추출한다. 그림 없는 문서는 `npx -y kordoc@^4 원본.hwpx --keep-layout-tables --keep-empty-cols -o 편집.md`를 쓴다. 그림 포함 문서는 `-o` 링크가 patch에서 그림 변경으로 오인될 수 있으므로 stdout을 UTF-8·LF로 저장한다. 예를 들어 Python에서 `subprocess.run(["npx.cmd", "-y", "kordoc@^4", "원본.hwpx", "--keep-layout-tables", "--keep-empty-cols"], check=True, stdout=편집파일)`처럼 바이너리로 연 파일에 stdout만 저장한다(Windows PowerShell 5의 `>`는 UTF-16이 될 수 있어 사용하지 않는다). 일반 증류용 파싱본은 그대로 둔다.
+
 ```powershell
 npx -y kordoc@^4 patch 원본.hwp 편집.md -o 원본_완성본.hwp
 npx -y kordoc@^4 patch 원본.hwpx 편집.md -o 원본_완성본.hwpx
 ```
 
 `patch`는 원본 포맷을 유지한다. 내장 재검증을 끄는 `--no-verify`는 사용하지 않는다.
-편집 md는 파싱본과 같은 LF 줄바꿈으로 저장한다(CRLF면 표 편집이 전부 skip된다). exit 0이면 전부 적용, exit 2면 stderr의 `SKIP` 목록에 미적용 편집이 있으니 지원되는 형태로 다시 반영하거나 사용자에게 알린다.
+편집 md는 UTF-8·LF로 저장한다(4.24.47에서는 CRLF 표 편집도 스모크 통과). exit 0이면 전부 적용, exit 2면 stderr의 `SKIP` 목록에 미적용 편집이 있으니 지원되는 형태로 다시 반영하거나 사용자에게 알린다.
+
+exit 2에서 생긴 `.rewrite.hwpx` 대체본도 자동으로 완성본으로 삼지 않는다. 원본 서식·미적용 내용·페이지를 따로 검수한다. HWPX 문단 추가·삭제는 기본 지원하며 필요하면 `--no-structure`로 막는다.
 
 ### HWPX 양식 채우기
 
 ```powershell
 npx -y kordoc@^4 fill 양식.hwpx --dry-run
+npx -y kordoc@^4 fill 양식.hwpx --dry-run -j 값.json
 npx -y kordoc@^4 fill 양식.hwpx -j 값.json -o 양식_완성본.hwpx --require-unique
 ```
 
-- `fill`의 서식 보존 경로는 HWPX용이다. `.hwp` 양식에 직행시키지 않는다.
+- 볼트에서는 HWPX만 `fill`한다. 최신 HWP5 지원에도 CLI의 서식 재구성 폴백이 남아 있어 `.hwp` 양식에 직행시키지 않는다.
+- 값별 계획의 목표 좌표와 `overwrittenBy`·`unmatched`·`rejected`를 먼저 확인한다. 실행 exit 0만으로 모든 필드가 채워졌다고 판단하지 말고 재파싱해 필수값을 대조한다.
 - 같은 라벨이 여러 곳이면 `--require-unique` 또는 배열 값을 사용해 오입력을 막는다.
 - 주민번호·계좌 등 민감 값은 응답이나 로그에 다시 쓰지 않는다.
 - 승인 이미지 삽입이 아닌 **양식 채우기**에서 Kordoc으로 안전하게 처리할 수 없는 `.hwp`는 변환하지 말고 HWPX 제공이 필요하다고 알린다.
