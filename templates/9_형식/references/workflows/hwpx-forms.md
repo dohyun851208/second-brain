@@ -1,7 +1,7 @@
 # HWP/HWPX 양식 작성
 
 일반 HWP/HWPX 작업의 정본은 Kordoc이다. 직접 XML 편집, 한컴 COM 변환, pack/unpack, 다른 HWPX 생성기로 자동 우회하지 않는다.
-Kordoc이 안전하게 처리하지 못하면 원본을 그대로 두고 실패 이유와 필요한 다음 입력만 알린다. 지원되는 암호 문서는 `--password`로 열 수 있지만 암호를 응답·로그에 남기지 않는다.
+Kordoc을 실행하기 전에 `9_형식/references/kordoc.md`의 환경 설정을 따른다. Kordoc이 안전하게 처리하지 못하면 원본을 그대로 두고 실패 이유와 필요한 다음 입력을 알린다.
 
 ## 1. 먼저 분석
 
@@ -22,7 +22,7 @@ npx -y kordoc@^4 patch 원본.hwpx 편집.md -o 원본_완성본.hwpx
 ```
 
 `patch`는 원본 포맷을 유지한다. 내장 재검증을 끄는 `--no-verify`는 사용하지 않는다.
-편집 md는 UTF-8·LF로 저장한다(4.24.47에서는 CRLF 표 편집도 스모크 통과). exit 0이면 전부 적용, exit 2면 stderr의 `SKIP` 목록에 미적용 편집이 있으니 지원되는 형태로 다시 반영하거나 사용자에게 알린다.
+편집 md는 UTF-8·LF로 저장한다. exit 0이어도 stderr에 검증 잔차가 있으면 결과를 재파싱해 의도한 편집과 대조한다. exit 2면 stderr의 `SKIP` 목록에 있는 미적용 편집을 지원되는 형태로 다시 반영하거나 사용자에게 알린다.
 
 exit 2에서 생긴 `.rewrite.hwpx` 대체본도 자동으로 완성본으로 삼지 않는다. 원본 서식·미적용 내용·페이지를 따로 검수한다. HWPX 문단 추가·삭제는 기본 지원하며 필요하면 `--no-structure`로 막는다.
 
@@ -34,7 +34,7 @@ npx -y kordoc@^4 fill 양식.hwpx --dry-run -j 값.json
 npx -y kordoc@^4 fill 양식.hwpx -j 값.json -o 양식_완성본.hwpx --require-unique
 ```
 
-- 볼트에서는 HWPX만 `fill`한다. 최신 HWP5 지원에도 CLI의 서식 재구성 폴백이 남아 있어 `.hwp` 양식에 직행시키지 않는다.
+- 볼트의 `fill` 입력과 출력은 HWPX로 지정한다. HWP5 입력의 서식 재구성 폴백은 `9_형식/references/kordoc.md`의 fill 절을 참고한다.
 - 값별 계획의 목표 좌표와 `overwrittenBy`·`unmatched`·`rejected`를 먼저 확인한다. 실행 exit 0만으로 모든 필드가 채워졌다고 판단하지 말고 재파싱해 필수값을 대조한다.
 - 같은 라벨이 여러 곳이면 `--require-unique` 또는 배열 값을 사용해 오입력을 막는다.
 - 주민번호·계좌 등 민감 값은 응답이나 로그에 다시 쓰지 않는다.

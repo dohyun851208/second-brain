@@ -15,7 +15,7 @@ class KordocPolicyTests(unittest.TestCase):
 
     def test_reviewed_version_and_range_are_explicit(self):
         self.assertIn("@^4", self.reference)
-        self.assertIn("**4.24.47 (2026-11-06)**", self.reference)
+        self.assertIn("**4.25.11 (2026-11-24)**", self.reference)
         self.assertIn("엔진 소스", self.reference)
 
     def test_v4_parse_contract_is_documented(self):
@@ -25,6 +25,8 @@ class KordocPolicyTests(unittest.TestCase):
             "--no-tables",
             "--image-refs",
             "--password",
+            "KORDOC_PASSWORD",
+            "KORDOC_NO_HANCOM=1",
         ):
             self.assertIn(term, self.reference)
 

@@ -4,7 +4,7 @@
 HWP 3.x/5.x·HWPX·HWPML·PDF·DOCX·XLS/XLSX·PNG/JPG/WebP → Markdown, 로컬 한글 OCR, 실제 페이지 복원·페이지별 JSON, 서식 보존 패치·채우기, 문서 비교, 개인정보 마스킹(redact), 공문 표기법·개조식 문체 검수(lint), 표 서식 프로필.
 일반 작업에는 한컴 오피스·COM이 불필요하고, 로컬 실행이라 문서가 외부로 나가지 않는다 (학생 개인정보 안전). 승인된 이미지 배치 작업에 `.hwp`가 입력된 경우만 `9_형식/scripts/place_image.py`가 한컴 COM으로 임시 HWPX를 만든다.
 
-> 호환 범위: `@^4` · 마지막 공식 소스/CLI 검증판: **4.24.47 (2026-11-06)**. Kordoc 엔진 소스는 이 스킬에 복제하지 않고 npm의 호환 범위로 실행한다.
+> 호환 범위: `@^4` · 마지막 공식 소스/CLI 검증판: **4.25.11 (2026-11-24)**. Kordoc 엔진 소스는 이 스킬에 복제하지 않고 npm의 호환 범위로 실행한다.
 
 ## 실행
 
@@ -14,6 +14,8 @@ npx -y kordoc@^4 <명령> ...
 
 Node.js 20 이상 필요. 첫 호출만 다운로드로 느리고 이후 캐시. `ECOMPROMISED`·`MODULE_NOT_FOUND` 에러가 나면
 `$env:LOCALAPPDATA\npm-cache\_npx\` 아래 해당 캐시 폴더를 지우고 재시도한다.
+
+Windows에서 볼트 문서를 처리하는 Kordoc 프로세스에는 `KORDOC_NO_HANCOM=1`을 전달한다. PowerShell에서는 작업 셸에 `$env:KORDOC_NO_HANCOM = '1'`을 설정한다. 암호·배포용 문서의 자동 한컴 폴백을 끄려면 Kordoc 4.25.0 이상이 필요하다.
 
 상시 사용 환경이면 `npx -y kordoc@^4 setup`(대화형 마법사)으로 MCP 서버 등록도 가능 — 콜드스타트가
 없어지고 문서 비교·세분 파싱·표 분류 등 MCP 도구 22종을 쓸 수 있다(CLI와 겹치는 기능 포함).
@@ -30,7 +32,7 @@ Node.js 20 이상 필요. 첫 호출만 다운로드로 느리고 이후 캐시.
 - "세컨드브레인 상태/업그레이드" 때만 `npm view kordoc version`으로 전체 최신판을 확인한다. 최신판이 5.x 이상이어도 자동 전환하지 않고 공식 변경 기록과 대표 문서 테스트 후 지침·호환 범위·시스템 버전을 함께 올린다.
 - 같은 메이저의 새 기능을 지침에 반영할 때도 공식 저장소의 마지막 검증 태그 이후 변경을 임시 clone에서 비교하고, 이 문서의 마지막 검증판과 시스템 버전을 함께 올린다. upstream 소스 자체를 스킬 `templates/`(볼트 밖)에 복사하지 않는다.
 
-### 4.24.47까지 반영한 변경점
+### 4.25.11까지 반영한 변경점
 
 - 4.5: `generate --image-dir`, 용지·방향·다단·머리말·꼬리말.
 - 4.6: PDF `--no-tables`, 이미지 많은 JSON의 `--image-refs`.
@@ -47,6 +49,9 @@ Node.js 20 이상 필요. 첫 호출만 다운로드로 느리고 이후 캐시.
 - 4.18~4.22: 표·셀 줄바꿈과 빈칸 patch 개선, `fill --dry-run -j`의 좌표 계획·`overwrittenBy`, HWPX 문단 추가·삭제 patch, 문서 직접 lint·`--gate`, 선택 OCR 모델·줄 신뢰도 지원.
 - 4.23~4.24: `generate --template` 견본 생성·`--pack` 기관팩, HWP→HWPX 변환, HWP5 fill/seal 입력, 부분 patch의 `.rewrite.hwpx` 대체본. 새 기능 지원과 볼트의 기본 작업 경로는 구별한다(아래 제한 참조).
 - 4.24.47: DOCX 저장 쪽 나눔 수가 문서 속성 Pages와 일치할 때만 `metadata.pageMode: "layout"`·쪽별 결과·`-p`를 적용한다. 쪽 번호 없는 DOCX에 임의 쪽 번호를 붙이지 않는다. OCR 표 머리·숫자·두 행 표 인식 개선도 포함한다.
+- 4.24.81부터 Markdown 문법으로 오인될 수 있는 일반 문단의 첫 문자를 이스케이프한다. 4.24.82부터 PDF 텍스트층은 Hayro로 읽고 OCR용 페이지는 PDFium으로 그린다.
+- 4.25.0부터 한컴 폴백을 끄는 `KORDOC_NO_HANCOM`과 파싱 암호용 `KORDOC_PASSWORD`를 지원한다. 보고서·계획서 목차와 PDF 조판 참조도 사용할 수 있다.
+- 4.25.4~4.25.11에서는 OCR 줄 후보·이미지와 표 셀 좌표를 확인할 수 있다. HWPX 글자 크기 기반 제목 판정, PDF 표와 쪽 경계의 한글 어절 이어 읽기, 짧은 OCR 이미지의 기울기 판정도 개선됐다.
 
 ## 명령 치트시트
 
@@ -61,12 +66,12 @@ Node.js 20 이상 필요. 첫 호출만 다운로드로 느리고 이후 캐시.
 | 이미지 OCR | PNG·JPG·WebP 파일을 직접 입력 — OCR 자동 적용 |
 | 이미지 많은 JSON | `--image-refs` (`--format json`의 이미지 바이트 대신 저장 경로만 기록, `-o`/`-d` 필요) |
 | PDF 수식 OCR | `--formula-ocr` (첫 사용 시 모델 ~155MB 자동 다운로드, `check-formula-models`로 상태 확인) |
-| 암호 문서 열기 | `--password <암호>` (HWPX·HWP3·HWP5, 한컴 DRM은 해당 없음; 암호를 응답·로그에 남기지 않음) |
+| 암호 문서 열기 | 해당 파싱 호출에만 `KORDOC_PASSWORD` 전달 (HWPX·HWP3·HWP5, 아래 암호·DRM 참고) |
 | 서식 필드 목록 | `npx -y kordoc@^4 fill 서식.hwpx --dry-run` |
 | 서식 채우기 | `npx -y kordoc@^4 fill 서식.hwpx -j 값.json -o 결과.hwpx` (가드 `--require-unique`·`--formats`·`--mask`) |
 | 표 빈 열 보존 | `--keep-empty-cols` (서식 입력란인 오른쪽 끝 빈 열이 트림되지 않게) |
 | 기존 문서 내용 수정 | `npx -y kordoc@^4 patch 원본.hwpx 편집.md -o 결과.hwpx` (`.hwp`도 가능 — 원본 포맷 유지; 편집 md는 LF 유지, 미적용 편집이 있으면 exit 2) |
-| 문서 비교 | MCP `compare_documents` (CLI엔 없음 — 양쪽을 md로 파싱해 diff해도 됨) |
+| 문서 비교 | `npx -y kordoc@^4 compare 이전.hwp 최신.hwpx --json` (exit 0은 동일, 1은 차이 발견, 2는 실행 오류) |
 | 새 공문서 생성 | `npx -y kordoc@^4 generate 초안.md -o 결과.hwpx --preset 보고서` |
 | 새 HWPX에 이미지 임베드 | 마크다운 `![](사진.png)` + `generate ... --image-dir <이미지 폴더>` |
 | 구조 검증 | `npx -y kordoc@^4 validate 결과.hwpx` |
@@ -87,7 +92,8 @@ Node.js 20 이상 필요. 첫 호출만 다운로드로 느리고 이후 캐시.
 - PDF는 OCR 모델이 캐시에 있으면 스캔 쪽과 큰 그림 속 글을 자동으로 읽을 수 있다. 명시 `--ocr`는 필요한 모델을 처음 받을 수 있고, 폐쇄망에서는 미리 반입한다.
 - PDF는 텍스트층 품질 신호를 계산한다. `needsOcr`이면 `--ocr`로 다시 파싱한다 — 필요한 페이지만 내장 PP-OCRv5로 로컬 인식하고 정상 페이지는 기존 텍스트를 유지한다. 텍스트층이 있지만 내용이 깨져 자동 판정이 놓친 경우에만 `--ocr-force`. 수식은 별도 `--formula-ocr`.
 - 2단 시험지처럼 장식 테두리가 표로 오인되어 읽기 순서가 뒤집힐 때만 `--no-tables`로 다시 파싱한다. 기본 표 감지는 먼저 유지한다.
-- OCR 기본값도 뚜렷한 손글씨 쪽을 선택 모델로 재인식할 수 있다. 인쇄 전용은 `--ocr-rec printed`, 혼합 자료는 `--ocr-rec auto`, 수기 서류는 `--ocr-rec handwriting`; 기울거나 흐린 스캔은 `--ocr-det medium`을 선택적으로 비교한다. JSON `--ocr-lines`·`--ocr-lines-all`은 줄 좌표·신뢰도·버린 줄 점검용이다. 개인정보 자산의 OCR 금지 규칙은 그대로다.
+- OCR 기본값도 뚜렷한 손글씨 쪽을 선택 모델로 재인식할 수 있다. 인쇄 전용은 `--ocr-rec printed`, 혼합 자료는 `--ocr-rec auto`, 수기 서류는 `--ocr-rec handwriting`을 쓴다. 기울거나 흐린 스캔은 `--ocr-det medium`을 선택적으로 비교한다.
+- OCR 결과가 모호하면 `--format json --ocr-lines --ocr-line-candidates 3`으로 줄별 후보와 신뢰도를 보고 원문과 대조한다. 버린 줄도 보려면 `--ocr-lines-all`을 쓴다. OCR 좌표가 가리키는 래스터가 필요할 때만 `--page-images png`를 추가한다. PDF 표 셀의 `bbox`는 검출된 셀에만 있으며 PDF pt(아래 원점)로 기록된다. 줄 좌표는 이미지 픽셀 단위다. `7_개인정보이미지/`는 OCR 대상에서 제외한다.
 - PNG·JPG·WebP는 파일을 직접 입력하면 OCR이 자동 적용된다. 별도 PDF 변환이나 `--ocr` 플래그가 필요 없다.
 - PDF 머리글/바닥글은 자동 제거된다 (`--no-header-footer`로 끔). HWP5 러닝 헤더가 페이지마다 반복되면 `--dedupe-headers` (기본 off — 붙임별 재번호가 오삭제될 수 있어 주의).
 - 문서 속 이미지는 4.16부터 `images/<출력 stem>/image_001.png`식으로 저장되고 같은 문서 폴더의 `manifest.json`이 이름·mimeType·bytes를 담는다. stem은 `-o` 출력 파일에서 마지막 확장자를 뺀 이름이다. 형식은 manifest로 확인하고, 폴더 이동·링크 보정은 `8_시스템/파서-프롬프트.md`를 따른다. HWP5 `--inline-images`는 base64 인라인이며 증류 입력에는 사용하지 않는다.
@@ -96,7 +102,7 @@ Node.js 20 이상 필요. 첫 호출만 다운로드로 느리고 이후 캐시.
 
 ### 암호·DRM
 
-- 암호가 제공된 HWPX·HWP3·HWP5는 `--password`로 Kordoc 경로 안에서 연다. 암호를 명령 예시, 응답, 로그, 파싱본 frontmatter에 재기록하지 않는다.
+- 암호가 제공된 HWPX·HWP3·HWP5를 파싱할 때는 해당 자식 프로세스 환경에만 `KORDOC_PASSWORD`를 전달한다. 작업 셸에서 환경변수를 사용했다면 호출 후 지운다. 명령줄 인자 `--password`는 프로세스 목록에 노출될 수 있다. 암호를 명령 예시·응답·로그·파싱본 frontmatter에 기록하지 않는다.
 - `--password`는 한컴 DRM 해제 옵션이 아니다. Kordoc이 처리하지 못하는 DRM·손상·미지원 구조는 원본을 보존하고 실패 이유만 보고한다.
 
 ### 실패 계약 (4.10)
@@ -106,7 +112,7 @@ Node.js 20 이상 필요. 첫 호출만 다운로드로 느리고 이후 캐시.
 
 | `code` | 뜻 | 파서 대응 |
 |---|---|---|
-| `ENCRYPTED` | 열기 암호 필요·불일치 | 암호를 요청해 `--password`로 재시도 |
+| `ENCRYPTED` | 열기 암호 필요·불일치 | 암호를 요청해 `KORDOC_PASSWORD`로 재시도 |
 | `DRM_PROTECTED` | 한컴 문서보안 | 원본 그대로 두고 보고 |
 | `IMAGE_BASED_PDF` | 텍스트층 없는 스캔 PDF | `--ocr`로 재파싱 |
 | `OUTPUT_TOO_LARGE` | 직렬화 한계 | `--format json`이면 `--image-refs`, 아니면 `-p`로 나눠 파싱 |
@@ -123,9 +129,9 @@ Node.js 20 이상 필요. 첫 호출만 다운로드로 느리고 이후 캐시.
 - 패치 후 재파싱 자동 검증이 내장돼 있다 (`--no-verify`로 생략 가능 — 생략하지 않는다).
 - 문단 안 강제 줄바꿈은 편집 md에 명시적 `<br>` (에디터 soft-wrap은 수정으로 안 침).
 - 원본은 절대 덮어쓰지 않는다 — `-o` 필수.
-- 종료 코드: 0 = 전부 적용, 2 = 일부 편집 미적용(stderr의 `SKIP` 목록에 이유 — 표 구조 변경 같은 미지원 편집). exit 2인 산출물은 완성본으로 보고하지 않고, skip된 편집을 지원되는 형태로 다시 반영하거나 사용자에게 알린다.
-- **편집 md는 UTF-8·LF로 저장한다.** 4.24.47 스모크에서 LF·CRLF 표 수정 모두 exit 0으로 재파싱까지 통과했다. 옛 판의 CRLF 전면 실패 설명은 현재 제한으로 적용하지 않는다.
-- 그림 포함 문서는 `-o`로 추출된 `images/<출력 stem>/...` 링크를 그대로 patch에 넣으면 그림 변경으로 오인해 exit 2가 날 수 있다(4.24.47 실측). 편집 전용 원고는 stdout을 UTF-8·LF로 저장해 원래 그림 파일명 참조를 유지한다. 공유용 파싱본의 링크를 고쳐 patch용으로 재사용하지 않는다.
+- exit 0이어도 stderr에 검증 잔차가 나오면 다시 파싱해 의도한 편집과 대조한다. exit 2는 일부 편집이 미적용된 상태다. stderr의 `SKIP` 목록을 보고 지원되는 형태로 다시 반영하거나 미적용 사항을 알린다.
+- **편집 md는 UTF-8·LF로 저장한다.** 4.25.11에서 CRLF 원고는 표 수정과 재파싱에 성공했지만 검증 잔차 경고가 났다. 같은 LF 원고는 검증 결과가 완전히 일치했다.
+- 그림 포함 문서는 `-o`로 추출된 `images/<출력 stem>/...` 링크를 그대로 patch에 넣으면 그림 변경으로 오인해 exit 2가 날 수 있다(4.25.11 실측). 편집 전용 원고는 stdout을 UTF-8·LF로 저장해 원래 그림 파일명 참조를 유지한다. 공유용 파싱본의 링크를 고쳐 patch용으로 재사용하지 않는다.
 - exit 2에서는 `<출력 stem>.rewrite.hwpx` 대체본도 생길 수 있다. 원본 서식 보존 성공을 뜻하지 않으므로 자동 제출·완성본 승격하지 말고 미적용 내용·서식·페이지를 별도로 검수한다.
 - `.hwp` in-place 패치는 4.10부터 자동 줄바꿈 문단을 더 짧게 고쳐도 한컴이 "손상/변조"로 거부하지 않는다. 그 이전 판으로 만든 `.hwp` 산출물이 열리지 않았다면 다시 패치한다.
 
@@ -149,7 +155,7 @@ Kordoc `seal`(앵커 글자 위에 도장·서명을 띄워 놓는 명령)은 �
 - `--size-mm`·`--mode overlap` 지정: 도장이 한 칸 위 다른 행에 찍혔고, 서명은 한 줄 아래로 내려가며 가로세로 비율이 정사각형으로 늘어났다. Kordoc이 만든 양식에서도 같았다.
 - 당시 `.hwp`는 받지 않았다. 4.24.27부터 HWP5 입력은 지원하지만, 이것만으로 이미지 비율·위치의 한컴 실측 문제가 해소됐다고 판단하지 않는다.
 
-4.24.47에서는 서명·신분증 등 자산별 한컴 실측을 재검증하지 않았으므로 기존 예외를 유지한다. 이 세 가지를 다시 재 보고, 모두 풀렸을 때만 `place_image.py` 예외를 줄이는 것을 검토한다. 실측 경로를 실행할 수 없으면 `seal`이나 다른 도구로 대신하지 않고 원본을 그대로 둔 채 필요한 조건을 알린다.
+이미지 표시 여부·위치·비율을 한컴 조판 결과에서 모두 검증한 뒤에만 `place_image.py` 예외를 줄이는 것을 검토한다. 실측 경로를 실행할 수 없으면 원본을 그대로 둔 채 필요한 조건을 알린다.
 
 ## generate (볼트 템플릿이 없을 때만)
 
@@ -162,7 +168,8 @@ Kordoc `seal`(앵커 글자 위에 도장·서명을 띄워 놓는 명령)은 �
 - ` ```chart ` 펜스 → 한컴 네이티브 차트 (type/cat/계열 라인, 펜스 안 주석 금지 — 값으로 오인됨).
 - 마크다운 `![](photo.png)`의 실제 PNG/JPEG/GIF/BMP를 넣으려면 `--image-dir <폴더>`를 지정한다. 새 문서 이미지에는 `9_형식/scripts/place_image.py`를 쓰지 않는다. 4.15.6까지는 한글 파일명(`사진.png`)을 오류 없이 건너뛰었다 (4.15.7에서 수정, #95 — 4.15.7 실측 "이미지 임베드: 1개"). 생성 뒤 stderr의 "이미지 임베드: N개"가 md의 이미지 참조 수와 같은지는 계속 확인한다.
 - 표 서식은 `--profile 양식.json`으로 기관 양식 재현(아래 "서식 프로필" 절).
-- 용지·조판은 `--paper`·`--landscape`·`--columns`·`--header`·`--footer`로 지정할 수 있다.
+- 용지·조판은 `--paper`·`--landscape`·`--columns`·`--header`·`--footer`로 지정한다. 다단 시험지는 `--column-gap`(mm)과 `--column-line`으로 단 사이 간격과 구분선을 지정할 수 있다.
+- 보고서·계획서에 목차가 필요하면 `--toc`를 켜고 조판된 장 시작 쪽을 대조한다. 참고 PDF의 여백·글꼴·줄간격을 반영하려면 `measure 참고.pdf --json`의 적용값을 확인하고 `generate 초안.md --preset 보고서 --layout 참고.pdf -o 결과.hwpx`를 쓴다. 직접 지정한 조판 옵션이 우선하며 `--plain`과는 함께 쓸 수 없다.
 - 공문 세부 옵션이 풍부하다: 결재란 `--approval 담당,팀장,과장`, 기안문 두문표·결문표 `--doc-head "org=기관명,slogan=원훈,to=수신,title=제목"`·`--doc-foot "sender=발신명의,drafter=주무관 홍길동,reviewer=과장 김철수,approver=국장 박영희,docNum=과-번호 (날짜),zip=…,address=…,phone=…,email=…,disclosure=공개"`(수신이 `내부결재`면 발신명의 자동 생략), 보고서 담당자 행 `--report-info`·요약박스 `--summary`·표지 `--cover --dept 부서 --doc-info "docNum=…"`·취급 표시 `--cover-label 대외주의`, 장 띠 색 `--band-color #DFE6F7 --band-text-color #000000`(교육청형 밝은 띠), 단계별 글꼴 `--levels "0=HY견고딕/17/bold,1=한컴돋움/15/bold,2=휴먼명조/14"`, 공고 `--notice-head`, 보도자료 `--press-head`, 표지 `--org`·`--date`, 쪽번호·끝표시 `--page-numbers`·`--end-mark`. 전체는 `generate --help`.
 - 생성 시 공문 표기법과 AI 흔적(`AI_*`) 검수가 자동으로 돌아 경고를 표시한다. 보고서·계획서·개조식 프리셋은 개조식 문체 경고도 자동으로 붙는다. 산출은 막지 않으니 경고를 읽고 md를 고쳐 재생성한다.
 - 엄격한 원고 검수가 필요하면 `lint --gate --preset 보고서` 또는 `generate --gate`를 쓴다. gate 미통과는 exit 1이며 generate는 출력하지 않는다. 기본 generate의 경고와 구분한다.
@@ -186,6 +193,7 @@ npx -y kordoc@^4 generate 초안.md -o 결과.hwpx --preset 보고서 --profile 
 주민번호·전화·이메일·카드·계좌를 탐지해 마스킹한다. HWPX/HWP는 **원본 서식 그대로 patch**, 그 외 포맷은 마스킹된 md 출력.
 
 - 기본 룰 `rrn,phone,email,card,account,brn,passport,driver` (4.14.3부터 사업자번호·여권·운전면허도 기본), 마스크 문자 `--mask-char ●`. `--rules`는 기본값에 더하지 않고 **대체**한다. exit 2는 가린 뒤에도 개인정보가 남았다는 뜻이므로 그 결과를 쓰지 않는다.
+- 인명·주소까지 검토할 때는 `redact --model int8` 또는 `--model q4`를 선택할 수 있다. 모델은 로컬에서 실행되고 첫 사용에 모델 파일을 받는다. 이 옵션은 인명·주소 규칙도 함께 켠다.
 - **먼저 `--dry-run`으로 탐지 리포트만** 보고 오탐·누락을 확인한다. 자동 검출 보조 도구이므로 결과는 사람이 최종 확인 — 이미지 속 텍스트는 못 잡는다.
 - 용도: `0_원본/`에 넣기 전, 학생 개인정보가 섞인 문서를 서식 유지한 채 익명화. (수집은 여전히 수동 — 마스킹만 돕고 자동 투입하지 않는다.)
 
@@ -199,8 +207,8 @@ npx -y kordoc@^4 generate 초안.md -o 결과.hwpx --preset 보고서 --profile 
 
 ## 함정
 
-- 암호가 제공된 지원 문서는 `--password`로 읽는다. 한컴 DRM·손상·미지원 구조처럼 Kordoc이 처리하지 못하는 파일은 원본을 그대로 두고 실패 이유를 보고한다. 승인된 `.hwp` 이미지 배치 작업 외에는 COM 변환이나 다른 도구로 자동 우회하지 않는다.
-- `.hwp`(바이너리)와 `.hwpx`(ZIP/XML)는 다른 포맷. fill/generate 산출물은 항상 HWPX지만 **patch만은 원본 포맷을 유지**한다 (`.hwp`→`.hwp`).
+- 파싱 출력은 `-o 결과.md`를 쓴다. `-o 결과.hwpx`는 HWPX 변환을 요청한다.
+- 볼트의 `fill`·`generate`는 `.hwpx`로 출력한다. Kordoc의 `.hwp` 출력은 별도 변환 의존성이 필요하다. `patch`는 입력 포맷과 같은 확장자로 출력한다.
 - 표가 깨져 보이는 PDF는 대부분 스캔본/텍스트층 손상 — 품질 신호를 확인하고 `--ocr`로 재파싱한다. 이미지 서식은 직접 입력해 OCR한다.
 - 편집 원고는 `--keep-layout-tables --keep-empty-cols`로 별도 추출하고 UTF-8·LF를 유지한다. 그림이 있으면 위 patch 절의 stdout 추출 규칙을 따른다.
 - 기본 파싱에서 풀린 1×1·1열 틀 표 때문에 표 대응이 어긋날 수 있다. 옛 판의 무조건 미지원 설명 대신 `--keep-layout-tables --keep-empty-cols`로 다시 추출하고, 그래도 skip이면 완성본으로 보고하지 않는다.
